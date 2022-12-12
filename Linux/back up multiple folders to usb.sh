@@ -37,7 +37,7 @@ mkdir -p $USB1_BACKUP_FOLDER
 mkdir -p $USB2_BACKUP_FOLDER
 
 # Generate the timestamp
-TIMESTAMP=$(date +%Y%m%d%H%M%S)
+TIMESTAMP=$(date +%d\.%m\.%Y\ \-\ %H\:%M)
 
 # Compress the folders to be backed up
 for FOLDER_TO_BACKUP in "${FOLDERS_TO_BACKUP[@]}"; do
