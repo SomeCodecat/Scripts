@@ -17,7 +17,6 @@ FOLDERS_TO_BACKUP=(
     "/path/to/folder1/to/backup"
     "/path/to/folder2/to/backup"
     "/path/to/folder3/to/backup"
-    ...
 )
 
 # Check if the folders to be backed up exist
@@ -37,7 +36,7 @@ mkdir -p $USB1_BACKUP_FOLDER
 mkdir -p $USB2_BACKUP_FOLDER
 
 # Generate the timestamp
-TIMESTAMP=$(date +%d\.%m\.%Y\ \-\ %H\:%M)
+TIMESTAMP=$(date +%d\.%m\.%Y\_\%H\_%M)
 
 # Compress the folders to be backed up
 for FOLDER_TO_BACKUP in "${FOLDERS_TO_BACKUP[@]}"; do
