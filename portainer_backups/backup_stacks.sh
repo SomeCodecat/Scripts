@@ -128,36 +128,75 @@ printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
   fi
 
   # Build the shell command that will run inside the container.
-  # It checks candidate compose filenames under the configured compose prefix and copies the first that exists.
+  # It copies the first candidate compose file it finds and prints its checksum and size: "<checksum|NO_CHECKSUM> <size>"
   container_sh_cmd="set -e\n"
   for candidate in $COMPOSE_CANDIDATES; do
     container_sh_cmd+="if [ -f \"${COMPOSE_DIR_PREFIX}/$id/$candidate\" ]; then src='${COMPOSE_DIR_PREFIX}/$id/$candidate'; fi\n"
-    container_sh_cmd+="[ -n \"\$src\" ] && cp \"\$src\" \"${CONTAINER_BACKUP_MOUNT}/$target_filename\" && exit 0\n"
+    container_sh_cmd+="if [ -n \"\$src\" ]; then\n"
+    container_sh_cmd+="  cp \"\$src\" \"${CONTAINER_BACKUP_MOUNT}/$target_filename\" || exit 3\n"
+    container_sh_cmd+="  size=\$(stat -c%s \"\$src\" 2>/dev/null || (ls -ln \"\$src\" | awk '{print \$5}'))\n"
+    container_sh_cmd+="  if command -v sha256sum >/dev/null 2>&1; then checksum=\$(sha256sum \"\$src\" | awk '{print \$1}'); elif command -v shasum >/dev/null 2>&1; then checksum=\$(shasum -a 256 \"\$src\" | awk '{print \$1}'); else checksum=NO_CHECKSUM; fi\n"
+    container_sh_cmd+="  echo \"$checksum $size\"\n"
+    container_sh_cmd+="  exit 0\n"
+    container_sh_cmd+="fi\n"
   done
   container_sh_cmd+="echo 'ERROR: compose file not found for stack id $id' 1>&2\nexit 2\n"
 
   # Run an ephemeral container to copy the file (mount portainer_data read-only, backup dir read-write)
   # Use alpine (small) and POSIX sh
-  # Run with retries for docker copy
+  # Run with retries for docker copy + verification
   copy_ok=1
   dr_attempt=0
   while [ $dr_attempt -le ${DOCKER_RETRIES:-2} ]; do
-    if docker run --rm -v "$PORTAINER_VOLUME":"$CONTAINER_PORTAINER_MOUNT":ro -v "$BACKUP_DIR":"$CONTAINER_BACKUP_MOUNT":rw "$ALPINE_IMAGE" sh -c "$container_sh_cmd"; then
-      copy_ok=0
-      break
+    # Run container and capture output (stdout/stderr)
+    container_out=""
+    rc=0
+    container_out=$(docker run --rm -v "$PORTAINER_VOLUME":"$CONTAINER_PORTAINER_MOUNT":ro -v "$BACKUP_DIR":"$CONTAINER_BACKUP_MOUNT":rw "$ALPINE_IMAGE" sh -c "$container_sh_cmd" 2>&1) || rc=$?
+    if [ $rc -ne 0 ]; then
+      echo "WARN: docker run failed (exit $rc). Output:\n$container_out" >&2
+      dr_attempt=$((dr_attempt + 1))
+      sleep ${DOCKER_BACKOFF_SEC:-5}
+      continue
     fi
+
+    # container_out should contain: <checksum_or_NO_CHECKSUM> <size>
+    container_checksum=$(printf '%s' "$container_out" | tr -d '\r' | awk '{print $1}')
+    container_size=$(printf '%s' "$container_out" | tr -d '\r' | awk '{print $2}')
+
+    # Compute host-side checksum if container provided one
+    host_checksum=""
+    if [ "$container_checksum" != "NO_CHECKSUM" ] && [ -n "$container_checksum" ]; then
+      if command -v sha256sum >/dev/null 2>&1; then
+        host_checksum=$(sha256sum "$target_path" 2>/dev/null | awk '{print $1}' || true)
+      elif command -v shasum >/dev/null 2>&1; then
+        host_checksum=$(shasum -a 256 "$target_path" 2>/dev/null | awk '{print $1}' || true)
+      fi
+    fi
+    host_size=$(stat -c%s "$target_path" 2>/dev/null || echo 0)
+
+    if [ -n "$container_checksum" ] && [ "$container_checksum" != "NO_CHECKSUM" ] && [ -n "$host_checksum" ]; then
+      if [ "$container_checksum" = "$host_checksum" ]; then
+        copy_ok=0
+        break
+      else
+        echo "WARN: checksum mismatch for $target_path (container:$container_checksum host:$host_checksum)" >&2
+      fi
+    else
+      # Fallback to size comparison
+      if [ "$container_size" -eq "$host_size" ] && [ "$host_size" -gt 0 ]; then
+        copy_ok=0
+        break
+      else
+        echo "WARN: size mismatch for $target_path (container:$container_size host:$host_size)" >&2
+      fi
+    fi
+
     dr_attempt=$((dr_attempt + 1))
-    echo "WARN: docker copy attempt $dr_attempt failed for stack $id, retrying in ${DOCKER_BACKOFF_SEC:-5}s..." >&2
+    echo "WARN: verification failed for stack $id, retrying in ${DOCKER_BACKOFF_SEC:-5}s..." >&2
     sleep ${DOCKER_BACKOFF_SEC:-5}
   done
   if [ $copy_ok -ne 0 ]; then
-    echo "ERROR: failed to copy compose file for stack '$name' (id=$id) after ${DOCKER_RETRIES:-2} attempts" >&2
-    continue
-  fi
-
-  # Verify the file was written and is not empty
-  if [ ! -f "$target_path" ] || [ ! -s "$target_path" ]; then
-    echo "ERROR: target file $target_path missing or empty after copy" >&2
+    echo "ERROR: failed to copy and verify compose file for stack '$name' (id=$id) after ${DOCKER_RETRIES:-2} attempts" >&2
     continue
   fi
 
