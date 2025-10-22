@@ -28,6 +28,8 @@ CONTAINER_PORTAINER_MOUNT="${CONTAINER_PORTAINER_MOUNT:-/data}"
 CONTAINER_BACKUP_MOUNT="${CONTAINER_BACKUP_MOUNT:-/backups}"
 USE_TIMESTAMPS="${USE_TIMESTAMPS:-false}"
 TIMESTAMP_FMT="${TIMESTAMP_FMT:-_%F_%H%M%S}"
+BACKUP_ENVS="${BACKUP_ENVS:-false}"
+DRY_RUN="${DRY_RUN:-false}"
 
 # Helper / environment checks
 command -v jq >/dev/null 2>&1 || { echo "ERROR: jq is not installed. Please install jq."; exit 1; }
@@ -40,6 +42,11 @@ if ! mkdir -p "$BACKUP_DIR"; then
 fi
 
 echo "===== Portainer stacks backup started: $(date --iso-8601=seconds) ====="
+
+# Show dry run status
+if [ "${DRY_RUN,,}" = "true" ] || [ "${DRY_RUN,,}" = "1" ]; then
+  echo "DRY RUN MODE: No files will be created, modified, or deleted"
+fi
 
 # If LOG_FILE is set and LOG_MAX_BYTES>0, perform simple rotation to limit size.
 if [ -n "${LOG_FILE:-}" ] && [ "${LOG_MAX_BYTES:-0}" -gt 0 ]; then
@@ -109,9 +116,13 @@ printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
 
   # Prepare stack directory and filenames
   stack_dir="$BACKUP_DIR/$base_filename"
-  if ! mkdir -p "$stack_dir" >/dev/null 2>&1; then
-    echo "ERROR: cannot create stack directory '$stack_dir'" >&2
-    continue
+  if [ "${DRY_RUN,,}" != "true" ] && [ "${DRY_RUN,,}" != "1" ]; then
+    if ! mkdir -p "$stack_dir" >/dev/null 2>&1; then
+      echo "ERROR: cannot create stack directory '$stack_dir'" >&2
+      continue
+    fi
+  else
+    echo "DRY RUN: would create directory '$stack_dir'"
   fi
 
   # Optionally append timestamp
@@ -161,6 +172,11 @@ printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
   copy_ok=1
   dr_attempt=0
   while [ $dr_attempt -le ${DOCKER_RETRIES:-2} ]; do
+    if [ "${DRY_RUN,,}" = "true" ] || [ "${DRY_RUN,,}" = "1" ]; then
+      echo "DRY RUN: would copy compose file to $target_path"
+      copy_ok=0
+      break
+    fi
     # Run container and capture output (stdout/stderr)
     container_out=""
     rc=0
@@ -217,57 +233,116 @@ printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
 
   # Back up env variables via Portainer API if enabled
   if [ "${BACKUP_ENVS:-false}" = "true" ] || [ "${BACKUP_ENVS:-false}" = "1" ]; then
-    # Fetch stack JSON from Portainer and save raw
-    stack_json=""
-    sj_attempt=0
-    while [ $sj_attempt -le ${CURL_RETRIES:-3} ]; do
-      if stack_json="$(curl -s -k ${CURL_OPTS:-} -H "${API_KEY_HEADER}: $PORTAINER_API_KEY" "$PORTAINER_URL/api/stacks/$id")"; then
-        break
-      fi
-      sj_attempt=$((sj_attempt + 1))
-      sleep ${CURL_BACKOFF_SEC:-5}
-    done
-    if [ -n "$stack_json" ]; then
-      printf '%s
-'"$stack_json" > "$json_path" 2>/dev/null || true
-      # Try to extract envs: strings or objects
-      if printf '%s
-'"$stack_json" | jq -r '.Env[]? | if type=="string" then . else ((.name//.Name) + "=" + (.value//.Value//"")) end' > "$env_path" 2>/dev/null; then
-        chmod 600 "$env_path" || true
-      else
-        # if jq extraction failed, ensure an empty file isn't left
-        : > "$env_path" || true
-        rm -f "$env_path" || true
-      fi
+    if [ "${DRY_RUN,,}" = "true" ] || [ "${DRY_RUN,,}" = "1" ]; then
+      echo "DRY RUN: would fetch stack JSON and extract env variables to $env_path"
     else
-      echo "WARN: could not fetch stack JSON for $id; skipping env backup" >&2
+      # Fetch stack JSON from Portainer and save raw
+      stack_json=""
+      sj_attempt=0
+      while [ $sj_attempt -le ${CURL_RETRIES:-3} ]; do
+        if stack_json="$(curl -s -k ${CURL_OPTS:-} -H "${API_KEY_HEADER}: $PORTAINER_API_KEY" "$PORTAINER_URL/api/stacks/$id")"; then
+          break
+        fi
+        sj_attempt=$((sj_attempt + 1))
+        sleep ${CURL_BACKOFF_SEC:-5}
+      done
+      if [ -n "$stack_json" ]; then
+        printf '%s\n' "$stack_json" > "$json_path" 2>/dev/null || true
+        # Try to extract envs: strings or objects
+        if printf '%s\n' "$stack_json" | jq -r '.Env[]? | if type=="string" then . else ((.name//.Name) + "=" + (.value//.Value//"")) end' > "$env_path" 2>/dev/null; then
+          chmod 600 "$env_path" || true
+        else
+          # if jq extraction failed, ensure an empty file isn't left
+          : > "$env_path" || true
+          rm -f "$env_path" || true
+        fi
+      else
+        echo "WARN: could not fetch stack JSON for $id; skipping env backup" >&2
+      fi
     fi
   fi
 
   # Rotation: keep last N backup runs per stack (grouped by core filename)
   if [ "${KEEP_COUNT:-0}" -gt 0 ]; then
-    # Find all distinct cores (filename without extension) inside the stack directory
-    declare -A core_mtime
-    for f in "$stack_dir"/${base_filename}*.*; do
-      [ -e "$f" ] || continue
-      name=$(basename -- "$f")
-      core="${name%.*}"
-      # determine newest mtime for this core (across extensions)
-      newest=$(ls -1t "$stack_dir"/"$core".* 2>/dev/null | head -n1 || true)
-      if [ -n "$newest" ]; then
-        mtime=$(stat -c %Y "$newest" 2>/dev/null || echo 0)
-        core_mtime["$core"]=$mtime
-      fi
-    done
-
-    # Build sorted list of cores by mtime desc
-    if [ ${#core_mtime[@]} -gt 0 ]; then
-      cores_sorted=( $(for k in "${!core_mtime[@]}"; do echo "${core_mtime[$k]}::$k"; done | sort -r -n | awk -F:: '{print $2}') )
-      # If more groups than KEEP_COUNT, remove the older groups
-      if [ ${#cores_sorted[@]} -gt ${KEEP_COUNT:-0} ]; then
-        for ((i=${KEEP_COUNT:-0}; i<${#cores_sorted[@]}; i++)); do
-          rm -f "$stack_dir/${cores_sorted[$i]}".* || echo "WARN: failed to remove old backup files for ${cores_sorted[$i]}"
+    if [ "${DRY_RUN,,}" = "true" ] || [ "${DRY_RUN,,}" = "1" ]; then
+      echo "DRY RUN: would perform rotation in $stack_dir (keep ${KEEP_COUNT} runs)"
+      # Still show what would be deleted for dry run
+      if [ -d "$stack_dir" ]; then
+        declare -A run_groups
+        for f in "$stack_dir"/${base_filename}*.*; do
+          [ -e "$f" ] || continue
+          name=$(basename -- "$f")
+          
+          # Parse timestamp if USE_TIMESTAMPS is enabled
+          if [ "${USE_TIMESTAMPS,,}" = "true" ] || [ "${USE_TIMESTAMPS,,}" = "1" ]; then
+            # Extract timestamp pattern from filename
+            # Remove base_filename prefix and extension suffix to get timestamp part
+            temp="${name#${base_filename}}"
+            run_id="${temp%.*}"
+            if [ -z "$run_id" ]; then
+              run_id="notimestamp"
+            fi
+          else
+            # Group by core filename (without extension)
+            run_id="${name%.*}"
+          fi
+          
+          # Track newest mtime for this run
+          mtime=$(stat -c %Y "$f" 2>/dev/null || echo 0)
+          if [ -z "${run_groups[$run_id]:-}" ] || [ "$mtime" -gt "${run_groups[$run_id]}" ]; then
+            run_groups["$run_id"]=$mtime
+          fi
         done
+        
+        # Sort runs by mtime and show what would be deleted
+        if [ ${#run_groups[@]} -gt 0 ]; then
+          runs_sorted=( $(for k in "${!run_groups[@]}"; do echo "${run_groups[$k]}::$k"; done | sort -r -n | awk -F:: '{print $2}') )
+          if [ ${#runs_sorted[@]} -gt ${KEEP_COUNT:-0} ]; then
+            echo "DRY RUN: would delete $(( ${#runs_sorted[@]} - ${KEEP_COUNT:-0} )) old backup runs:"
+            for ((i=${KEEP_COUNT:-0}; i<${#runs_sorted[@]}; i++)); do
+              for ext_file in "$stack_dir/${base_filename}${runs_sorted[$i]}".*; do
+                [ -e "$ext_file" ] && echo "  would delete: $(basename "$ext_file")"
+              done
+            done
+          fi
+        fi
+      fi
+    else
+      # Actual rotation logic
+      declare -A run_groups
+      for f in "$stack_dir"/${base_filename}*.*; do
+        [ -e "$f" ] || continue
+        name=$(basename -- "$f")
+        
+        # Parse timestamp if USE_TIMESTAMPS is enabled
+        if [ "${USE_TIMESTAMPS,,}" = "true" ] || [ "${USE_TIMESTAMPS,,}" = "1" ]; then
+          # Extract timestamp pattern from filename
+          # Remove base_filename prefix and extension suffix to get timestamp part
+          temp="${name#${base_filename}}"
+          run_id="${temp%.*}"
+          if [ -z "$run_id" ]; then
+            run_id="notimestamp"
+          fi
+        else
+          # Group by core filename (without extension)
+          run_id="${name%.*}"
+        fi
+        
+        # Track newest mtime for this run
+        mtime=$(stat -c %Y "$f" 2>/dev/null || echo 0)
+        if [ -z "${run_groups[$run_id]:-}" ] || [ "$mtime" -gt "${run_groups[$run_id]}" ]; then
+          run_groups["$run_id"]=$mtime
+        fi
+      done
+
+      # Sort runs by mtime desc and remove old ones
+      if [ ${#run_groups[@]} -gt 0 ]; then
+        runs_sorted=( $(for k in "${!run_groups[@]}"; do echo "${run_groups[$k]}::$k"; done | sort -r -n | awk -F:: '{print $2}') )
+        if [ ${#runs_sorted[@]} -gt ${KEEP_COUNT:-0} ]; then
+          for ((i=${KEEP_COUNT:-0}; i<${#runs_sorted[@]}; i++)); do
+            rm -f "$stack_dir/${base_filename}${runs_sorted[$i]}".* || echo "WARN: failed to remove old backup files for ${runs_sorted[$i]}"
+          done
+        fi
       fi
     fi
   fi
