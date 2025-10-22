@@ -107,14 +107,27 @@ printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
     base_filename="${safe_name}"
   fi
 
+  # Prepare stack directory and filenames
+  stack_dir="$BACKUP_DIR/$base_filename"
+  if ! mkdir -p "$stack_dir" >/dev/null 2>&1; then
+    echo "ERROR: cannot create stack directory '$stack_dir'" >&2
+    continue
+  fi
+
   # Optionally append timestamp
   if [ "${USE_TIMESTAMPS,,}" = "true" ] || [ "${USE_TIMESTAMPS,,}" = "1" ]; then
     ts=$(date +"${TIMESTAMP_FMT}")
     target_filename="${base_filename}${ts}.yml"
+    env_filename="${base_filename}${ts}.env"
+    json_filename="${base_filename}${ts}.stack.json"
   else
     target_filename="${base_filename}.yml"
+    env_filename="${base_filename}.env"
+    json_filename="${base_filename}.stack.json"
   fi
-  target_path="$BACKUP_DIR/$target_filename"
+  target_path="$stack_dir/$target_filename"
+  env_path="$stack_dir/$env_filename"
+  json_path="$stack_dir/$json_filename"
 
   echo "Backing up stack id=$id name='$name' -> $target_path"
 
@@ -132,8 +145,8 @@ printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
   container_sh_cmd="set -e\n"
   for candidate in $COMPOSE_CANDIDATES; do
     container_sh_cmd+="if [ -f \"${COMPOSE_DIR_PREFIX}/$id/$candidate\" ]; then src='${COMPOSE_DIR_PREFIX}/$id/$candidate'; fi\n"
-    container_sh_cmd+="if [ -n \"\$src\" ]; then\n"
-    container_sh_cmd+="  cp \"\$src\" \"${CONTAINER_BACKUP_MOUNT}/$target_filename\" || exit 3\n"
+  container_sh_cmd+="if [ -n \"\$src\" ]; then\n"
+  container_sh_cmd+="  cp \"\$src\" \"${CONTAINER_BACKUP_MOUNT}/${base_filename}/$target_filename\" || exit 3\n"
     container_sh_cmd+="  size=\$(stat -c%s \"\$src\" 2>/dev/null || (ls -ln \"\$src\" | awk '{print \$5}'))\n"
     container_sh_cmd+="  if command -v sha256sum >/dev/null 2>&1; then checksum=\$(sha256sum \"\$src\" | awk '{print \$1}'); elif command -v shasum >/dev/null 2>&1; then checksum=\$(shasum -a 256 \"\$src\" | awk '{print \$1}'); else checksum=NO_CHECKSUM; fi\n"
     container_sh_cmd+="  echo \"$checksum $size\"\n"
@@ -151,7 +164,7 @@ printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
     # Run container and capture output (stdout/stderr)
     container_out=""
     rc=0
-    container_out=$(docker run --rm -v "$PORTAINER_VOLUME":"$CONTAINER_PORTAINER_MOUNT":ro -v "$BACKUP_DIR":"$CONTAINER_BACKUP_MOUNT":rw "$ALPINE_IMAGE" sh -c "$container_sh_cmd" 2>&1) || rc=$?
+  container_out=$(docker run --rm -v "$PORTAINER_VOLUME":"$CONTAINER_PORTAINER_MOUNT":ro -v "$BACKUP_DIR":"$CONTAINER_BACKUP_MOUNT":rw "$ALPINE_IMAGE" sh -c "$container_sh_cmd" 2>&1) || rc=$?
     if [ $rc -ne 0 ]; then
       echo "WARN: docker run failed (exit $rc). Output:\n$container_out" >&2
       dr_attempt=$((dr_attempt + 1))
@@ -195,12 +208,41 @@ printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
     echo "WARN: verification failed for stack $id, retrying in ${DOCKER_BACKOFF_SEC:-5}s..." >&2
     sleep ${DOCKER_BACKOFF_SEC:-5}
   done
-  if [ $copy_ok -ne 0 ]; then
-    echo "ERROR: failed to copy and verify compose file for stack '$name' (id=$id) after ${DOCKER_RETRIES:-2} attempts" >&2
-    continue
-  fi
+    if [ $copy_ok -ne 0 ]; then
+      echo "ERROR: failed to copy and verify compose file for stack '$name' (id=$id) after ${DOCKER_RETRIES:-2} attempts" >&2
+      continue
+    fi
 
-  echo "OK: wrote $target_path"
+    echo "OK: wrote $target_path"
+
+  # Back up env variables via Portainer API if enabled
+  if [ "${BACKUP_ENVS:-false}" = "true" ] || [ "${BACKUP_ENVS:-false}" = "1" ]; then
+    # Fetch stack JSON from Portainer and save raw
+    stack_json=""
+    sj_attempt=0
+    while [ $sj_attempt -le ${CURL_RETRIES:-3} ]; do
+      if stack_json="$(curl -s -k ${CURL_OPTS:-} -H "${API_KEY_HEADER}: $PORTAINER_API_KEY" "$PORTAINER_URL/api/stacks/$id")"; then
+        break
+      fi
+      sj_attempt=$((sj_attempt + 1))
+      sleep ${CURL_BACKOFF_SEC:-5}
+    done
+    if [ -n "$stack_json" ]; then
+      printf '%s
+'"$stack_json" > "$json_path" 2>/dev/null || true
+      # Try to extract envs: strings or objects
+      if printf '%s
+'"$stack_json" | jq -r '.Env[]? | if type=="string" then . else ((.name//.Name) + "=" + (.value//.Value//"")) end' > "$env_path" 2>/dev/null; then
+        chmod 600 "$env_path" || true
+      else
+        # if jq extraction failed, ensure an empty file isn't left
+        : > "$env_path" || true
+        rm -f "$env_path" || true
+      fi
+    else
+      echo "WARN: could not fetch stack JSON for $id; skipping env backup" >&2
+    fi
+  fi
 
   # Rotation: if KEEP_COUNT > 0, keep last N files per stack (by filename prefix)
   if [ "${KEEP_COUNT:-0}" -gt 0 ]; then
