@@ -34,11 +34,36 @@ fi
 
 echo "===== Portainer stacks backup started: $(date --iso-8601=seconds) ====="
 
+# If LOG_FILE is set and LOG_MAX_BYTES>0, perform simple rotation to limit size.
+if [ -n "${LOG_FILE:-}" ] && [ "${LOG_MAX_BYTES:-0}" -gt 0 ]; then
+  if [ -f "$LOG_FILE" ]; then
+    log_size=$(stat -c%s "$LOG_FILE" 2>/dev/null || echo 0)
+    if [ "$log_size" -ge "$LOG_MAX_BYTES" ]; then
+      timestamp=$(date +%Y%m%d%H%M%S)
+      mv "$LOG_FILE" "${LOG_FILE}.${timestamp}"
+      : > "$LOG_FILE" || true
+    fi
+  else
+    : > "$LOG_FILE" || true
+  fi
+fi
+
 # Query Portainer stacks
-stacks_json="$(curl -s -k -H "X-API-Key: $PORTAINER_API_KEY" "$PORTAINER_URL/api/stacks")" || {
-  echo "ERROR: curl failed when contacting $PORTAINER_URL/api/stacks"
+# Query Portainer stacks with retries/backoff
+stacks_json=""
+attempt=0
+while [ $attempt -le ${CURL_RETRIES:-3} ]; do
+  if stacks_json="$(curl -s -k ${CURL_OPTS:-} -H "X-API-Key: $PORTAINER_API_KEY" "$PORTAINER_URL/api/stacks")"; then
+    break
+  fi
+  attempt=$((attempt + 1))
+  echo "WARN: curl attempt $attempt failed, retrying in ${CURL_BACKOFF_SEC:-5}s..."
+  sleep ${CURL_BACKOFF_SEC:-5}
+done
+if [ -z "$stacks_json" ]; then
+  echo "ERROR: curl failed to fetch stacks after ${CURL_RETRIES:-3} attempts"
   exit 1
-}
+fi
 
 # Validate JSON
 if ! printf '%s' "$stacks_json" | jq -e . >/dev/null 2>&1; then
@@ -77,6 +102,15 @@ printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
 
   echo "Backing up stack id=$id name='$name' -> $target_path"
 
+  # Before copying, ensure there's enough free space on the target mount
+  if [ "${MIN_FREE_BYTES:-0}" -gt 0 ]; then
+    free_bytes=$(df --output=avail -B1 "$BACKUP_DIR" 2>/dev/null | tail -1 || echo 0)
+    if [ "$free_bytes" -lt "$MIN_FREE_BYTES" ]; then
+      echo "ERROR: insufficient free space in $BACKUP_DIR (have $free_bytes < need $MIN_FREE_BYTES). Skipping $id" >&2
+      continue
+    fi
+  fi
+
   # Build the shell command that will run inside the container.
   # It checks both docker-compose.yml and docker-compose.yaml and copies whichever exists.
   container_sh_cmd="
@@ -94,11 +128,47 @@ printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
 
   # Run an ephemeral container to copy the file (mount portainer_data read-only, backup dir read-write)
   # Use alpine (small) and POSIX sh
-  if docker run --rm -v "$PORTAINER_VOLUME":/data:ro -v "$BACKUP_DIR":/backups:rw "$ALPINE_IMAGE" sh -c "$container_sh_cmd"; then
-    echo "OK: wrote $target_path"
-  else
-    echo "ERROR: failed to copy compose file for stack '$name' (id=$id)" >&2
-    # continue with next stack (do not exit the whole script)
+  # Run with retries for docker copy
+  copy_ok=1
+  dr_attempt=0
+  while [ $dr_attempt -le ${DOCKER_RETRIES:-2} ]; do
+    if docker run --rm -v "$PORTAINER_VOLUME":/data:ro -v "$BACKUP_DIR":/backups:rw "$ALPINE_IMAGE" sh -c "$container_sh_cmd"; then
+      copy_ok=0
+      break
+    fi
+    dr_attempt=$((dr_attempt + 1))
+    echo "WARN: docker copy attempt $dr_attempt failed for stack $id, retrying in ${DOCKER_BACKOFF_SEC:-5}s..." >&2
+    sleep ${DOCKER_BACKOFF_SEC:-5}
+  done
+  if [ $copy_ok -ne 0 ]; then
+    echo "ERROR: failed to copy compose file for stack '$name' (id=$id) after ${DOCKER_RETRIES:-2} attempts" >&2
+    continue
+  fi
+
+  # Verify the file was written and is not empty
+  if [ ! -f "$target_path" ] || [ ! -s "$target_path" ]; then
+    echo "ERROR: target file $target_path missing or empty after copy" >&2
+    continue
+  fi
+
+  echo "OK: wrote $target_path"
+
+  # Rotation: if KEEP_COUNT > 0, keep last N files per stack (by filename prefix)
+  if [ "${KEEP_COUNT:-0}" -gt 0 ]; then
+    # Build a glob pattern for this stack's files. If SIMPLE_MODE use prefix+id, else use the safe_name base.
+    if [ "${SIMPLE_MODE,,}" = "true" ] || [ "${SIMPLE_MODE,,}" = "1" ]; then
+      pattern="$BACKUP_DIR/${SIMPLE_PREFIX}${id}*"
+    else
+      pattern="$BACKUP_DIR/${safe_name}*"
+    fi
+    # List files sorted by mtime (newest first) then remove files beyond KEEP_COUNT
+    files=( $(ls -1t $pattern 2>/dev/null || true) )
+    if [ ${#files[@]} -gt ${KEEP_COUNT:-0} ]; then
+      # Remove the oldest ones (from index KEEP_COUNT onwards)
+      for ((i=${KEEP_COUNT:-0}; i<${#files[@]}; i++)); do
+        rm -f "${files[$i]}" || echo "WARN: failed to remove old backup ${files[$i]}"
+      done
+    fi
   fi
 done
 
