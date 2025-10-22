@@ -1,11 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
+#!/usr/bin/env bash
+set -euo pipefail
 IFS=$'\n\t'
 
-# Configuration - edit these
-PORTAINER_URL="https://portainer.example:9443"
-PORTAINER_API_KEY="your_api_key_here"
-BACKUP_DIR="/opt/portainer_backups/backups"
+# Config file (sourced if present). By default we look for a config next to the script.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+CONFIG_FILE="$SCRIPT_DIR/backup_stacks.conf"
+
+# If a config file exists, source it. It may define PORTAINER_URL, PORTAINER_API_KEY, BACKUP_DIR, PORTAINER_VOLUME, ALPINE_IMAGE, etc.
+if [ -f "$CONFIG_FILE" ]; then
+  # shellcheck source=/dev/null
+  . "$CONFIG_FILE"
+fi
+
+# Defaults (can be overridden by environment variables or the config file)
+: ""  # no-op to ensure last command status for set -e
+PORTAINER_URL="${PORTAINER_URL:-https://portainer.example:9443}"
+PORTAINER_API_KEY="${PORTAINER_API_KEY:-your_api_key_here}"
+BACKUP_DIR="${BACKUP_DIR:-/opt/portainer_backups/backups}"
+PORTAINER_VOLUME="${PORTAINER_VOLUME:-portainer_data}"
+ALPINE_IMAGE="${ALPINE_IMAGE:-alpine:3.19}"
 
 # Helper / environment checks
 command -v jq >/dev/null 2>&1 || { echo "ERROR: jq is not installed. Please install jq."; exit 1; }
@@ -60,7 +75,6 @@ printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
 
   # Build the shell command that will run inside the container.
   # It checks both docker-compose.yml and docker-compose.yaml and copies whichever exists.
-  # We expand $id and $target_filename on the host side so they appear literally inside the container command.
   container_sh_cmd="
     set -e
     if [ -f \"/data/compose/$id/docker-compose.yml\" ]; then
@@ -76,7 +90,7 @@ printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
 
   # Run an ephemeral container to copy the file (mount portainer_data read-only, backup dir read-write)
   # Use alpine (small) and POSIX sh
-  if docker run --rm -v portainer_data:/data:ro -v "$BACKUP_DIR":/backups:rw alpine:3.19 sh -c "$container_sh_cmd"; then
+  if docker run --rm -v "$PORTAINER_VOLUME":/data:ro -v "$BACKUP_DIR":/backups:rw "$ALPINE_IMAGE" sh -c "$container_sh_cmd"; then
     echo "OK: wrote $target_path"
   else
     echo "ERROR: failed to copy compose file for stack '$name' (id=$id)" >&2
