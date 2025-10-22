@@ -21,6 +21,13 @@ PORTAINER_VOLUME="${PORTAINER_VOLUME:-portainer_data}"
 ALPINE_IMAGE="${ALPINE_IMAGE:-alpine:3.19}"
 SIMPLE_MODE="${SIMPLE_MODE:-false}"
 SIMPLE_PREFIX="${SIMPLE_PREFIX:-stack_}"
+API_KEY_HEADER="${API_KEY_HEADER:-X-API-Key}"
+COMPOSE_DIR_PREFIX="${COMPOSE_DIR_PREFIX:-/data/compose}"
+COMPOSE_CANDIDATES="${COMPOSE_CANDIDATES:-docker-compose.yml docker-compose.yaml}"
+CONTAINER_PORTAINER_MOUNT="${CONTAINER_PORTAINER_MOUNT:-/data}"
+CONTAINER_BACKUP_MOUNT="${CONTAINER_BACKUP_MOUNT:-/backups}"
+USE_TIMESTAMPS="${USE_TIMESTAMPS:-false}"
+TIMESTAMP_FMT="${TIMESTAMP_FMT:-_%F_%H%M%S}"
 
 # Helper / environment checks
 command -v jq >/dev/null 2>&1 || { echo "ERROR: jq is not installed. Please install jq."; exit 1; }
@@ -53,7 +60,7 @@ fi
 stacks_json=""
 attempt=0
 while [ $attempt -le ${CURL_RETRIES:-3} ]; do
-  if stacks_json="$(curl -s -k ${CURL_OPTS:-} -H "X-API-Key: $PORTAINER_API_KEY" "$PORTAINER_URL/api/stacks")"; then
+  if stacks_json="$(curl -s -k ${CURL_OPTS:-} -H "${API_KEY_HEADER}: $PORTAINER_API_KEY" "$PORTAINER_URL/api/stacks")"; then
     break
   fi
   attempt=$((attempt + 1))
@@ -93,10 +100,19 @@ printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
     safe_name="stack_$id"
   fi
 
+  # Build base filename (without timestamp)
   if [ "${SIMPLE_MODE,,}" = "true" ] || [ "${SIMPLE_MODE,,}" = "1" ]; then
-    target_filename="${SIMPLE_PREFIX}${id}.yml"
+    base_filename="${SIMPLE_PREFIX}${id}"
   else
-    target_filename="${safe_name}.yml"
+    base_filename="${safe_name}"
+  fi
+
+  # Optionally append timestamp
+  if [ "${USE_TIMESTAMPS,,}" = "true" ] || [ "${USE_TIMESTAMPS,,}" = "1" ]; then
+    ts=$(date +"${TIMESTAMP_FMT}")
+    target_filename="${base_filename}${ts}.yml"
+  else
+    target_filename="${base_filename}.yml"
   fi
   target_path="$BACKUP_DIR/$target_filename"
 
@@ -112,19 +128,13 @@ printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
   fi
 
   # Build the shell command that will run inside the container.
-  # It checks both docker-compose.yml and docker-compose.yaml and copies whichever exists.
-  container_sh_cmd="
-    set -e
-    if [ -f \"/data/compose/$id/docker-compose.yml\" ]; then
-      src='/data/compose/$id/docker-compose.yml'
-    elif [ -f \"/data/compose/$id/docker-compose.yaml\" ]; then
-      src='/data/compose/$id/docker-compose.yaml'
-    else
-      echo 'ERROR: compose file not found for stack id $id' 1>&2
-      exit 2
-    fi
-    cp \"\$src\" \"/backups/$target_filename\"
-  "
+  # It checks candidate compose filenames under the configured compose prefix and copies the first that exists.
+  container_sh_cmd="set -e\n"
+  for candidate in $COMPOSE_CANDIDATES; do
+    container_sh_cmd+="if [ -f \"${COMPOSE_DIR_PREFIX}/$id/$candidate\" ]; then src='${COMPOSE_DIR_PREFIX}/$id/$candidate'; fi\n"
+    container_sh_cmd+="[ -n \"\$src\" ] && cp \"\$src\" \"${CONTAINER_BACKUP_MOUNT}/$target_filename\" && exit 0\n"
+  done
+  container_sh_cmd+="echo 'ERROR: compose file not found for stack id $id' 1>&2\nexit 2\n"
 
   # Run an ephemeral container to copy the file (mount portainer_data read-only, backup dir read-write)
   # Use alpine (small) and POSIX sh
@@ -132,7 +142,7 @@ printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
   copy_ok=1
   dr_attempt=0
   while [ $dr_attempt -le ${DOCKER_RETRIES:-2} ]; do
-    if docker run --rm -v "$PORTAINER_VOLUME":/data:ro -v "$BACKUP_DIR":/backups:rw "$ALPINE_IMAGE" sh -c "$container_sh_cmd"; then
+    if docker run --rm -v "$PORTAINER_VOLUME":"$CONTAINER_PORTAINER_MOUNT":ro -v "$BACKUP_DIR":"$CONTAINER_BACKUP_MOUNT":rw "$ALPINE_IMAGE" sh -c "$container_sh_cmd"; then
       copy_ok=0
       break
     fi
