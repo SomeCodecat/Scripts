@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
-#!/usr/bin/env bash
-set -euo pipefail
 IFS=$'\n\t'
 
 # Config file (sourced if present). By default we look for a config next to the script.
@@ -21,6 +19,8 @@ PORTAINER_API_KEY="${PORTAINER_API_KEY:-your_api_key_here}"
 BACKUP_DIR="${BACKUP_DIR:-/opt/portainer_backups/backups}"
 PORTAINER_VOLUME="${PORTAINER_VOLUME:-portainer_data}"
 ALPINE_IMAGE="${ALPINE_IMAGE:-alpine:3.19}"
+SIMPLE_MODE="${SIMPLE_MODE:-false}"
+SIMPLE_PREFIX="${SIMPLE_PREFIX:-stack_}"
 
 # Helper / environment checks
 command -v jq >/dev/null 2>&1 || { echo "ERROR: jq is not installed. Please install jq."; exit 1; }
@@ -68,7 +68,11 @@ printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
     safe_name="stack_$id"
   fi
 
-  target_filename="${safe_name}.yml"
+  if [ "${SIMPLE_MODE,,}" = "true" ] || [ "${SIMPLE_MODE,,}" = "1" ]; then
+    target_filename="${SIMPLE_PREFIX}${id}.yml"
+  else
+    target_filename="${safe_name}.yml"
+  fi
   target_path="$BACKUP_DIR/$target_filename"
 
   echo "Backing up stack id=$id name='$name' -> $target_path"
