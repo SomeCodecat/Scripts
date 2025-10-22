@@ -244,21 +244,31 @@ printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
     fi
   fi
 
-  # Rotation: if KEEP_COUNT > 0, keep last N files per stack (by filename prefix)
+  # Rotation: keep last N backup runs per stack (grouped by core filename)
   if [ "${KEEP_COUNT:-0}" -gt 0 ]; then
-    # Build a glob pattern for this stack's files. If SIMPLE_MODE use prefix+id, else use the safe_name base.
-    if [ "${SIMPLE_MODE,,}" = "true" ] || [ "${SIMPLE_MODE,,}" = "1" ]; then
-      pattern="$BACKUP_DIR/${SIMPLE_PREFIX}${id}*"
-    else
-      pattern="$BACKUP_DIR/${safe_name}*"
-    fi
-    # List files sorted by mtime (newest first) then remove files beyond KEEP_COUNT
-    files=( $(ls -1t $pattern 2>/dev/null || true) )
-    if [ ${#files[@]} -gt ${KEEP_COUNT:-0} ]; then
-      # Remove the oldest ones (from index KEEP_COUNT onwards)
-      for ((i=${KEEP_COUNT:-0}; i<${#files[@]}; i++)); do
-        rm -f "${files[$i]}" || echo "WARN: failed to remove old backup ${files[$i]}"
-      done
+    # Find all distinct cores (filename without extension) inside the stack directory
+    declare -A core_mtime
+    for f in "$stack_dir"/${base_filename}*.*; do
+      [ -e "$f" ] || continue
+      name=$(basename -- "$f")
+      core="${name%.*}"
+      # determine newest mtime for this core (across extensions)
+      newest=$(ls -1t "$stack_dir"/"$core".* 2>/dev/null | head -n1 || true)
+      if [ -n "$newest" ]; then
+        mtime=$(stat -c %Y "$newest" 2>/dev/null || echo 0)
+        core_mtime["$core"]=$mtime
+      fi
+    done
+
+    # Build sorted list of cores by mtime desc
+    if [ ${#core_mtime[@]} -gt 0 ]; then
+      cores_sorted=( $(for k in "${!core_mtime[@]}"; do echo "${core_mtime[$k]}::$k"; done | sort -r -n | awk -F:: '{print $2}') )
+      # If more groups than KEEP_COUNT, remove the older groups
+      if [ ${#cores_sorted[@]} -gt ${KEEP_COUNT:-0} ]; then
+        for ((i=${KEEP_COUNT:-0}; i<${#cores_sorted[@]}; i++)); do
+          rm -f "$stack_dir/${cores_sorted[$i]}".* || echo "WARN: failed to remove old backup files for ${cores_sorted[$i]}"
+        done
+      fi
     fi
   fi
 done
