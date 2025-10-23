@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-set -euo pipefail
+# Note: Using set -uo pipefail but NOT set -e to handle empty checks gracefully
+set -uo pipefail
 
 echo "═══════════════════════════════════════════════════════════"
 echo "Portainer Backup Script - Uninstall & Cleanup"
@@ -27,15 +28,16 @@ if [ -f "/etc/logrotate.d/portainer-backup" ]; then
 fi
 
 if command -v crontab >/dev/null 2>&1; then
-  CRON_COUNT=$(sudo crontab -l 2>/dev/null | grep backup_stacks.sh | wc -l)
-  if [ "$CRON_COUNT" -gt 0 ]; then
+  CRON_COUNT=$(sudo crontab -l 2>/dev/null | grep backup_stacks.sh | wc -l || echo "0")
+  CRON_COUNT=${CRON_COUNT:-0}  # Default to 0 if empty
+  if [ "$CRON_COUNT" -gt 0 ] 2>/dev/null; then
     echo "  ✓ Cron job(s) found ($CRON_COUNT):"
     sudo crontab -l 2>/dev/null | grep backup_stacks.sh | while read -r line; do
       echo "    $line"
     done
     FOUND_COMPONENTS=true
     
-    if [ "$CRON_COUNT" -gt 1 ]; then
+    if [ "$CRON_COUNT" -gt 1 ] 2>/dev/null; then
       echo "    ⚠️  Multiple cron jobs detected (will clean up duplicates)"
       FOUND_OLD_CONFIGS=true
     fi
