@@ -242,7 +242,7 @@ printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
     container_out=""
     rc=0
     echo "DEBUG: About to run docker with command: [$container_sh_cmd]" >&2
-  container_out=$(docker run --rm -v "$PORTAINER_VOLUME":"$CONTAINER_PORTAINER_MOUNT":ro -v "$BACKUP_DIR":"$CONTAINER_BACKUP_MOUNT":rw "$ALPINE_IMAGE" sh -c "$container_sh_cmd" 2>&1) || rc=$?
+  container_out=$(docker run --rm -v "$PORTAINER_VOLUME":"$CONTAINER_PORTAINER_MOUNT":ro -v "$BACKUP_DIR":"$CONTAINER_BACKUP_MOUNT":rw "$ALPINE_IMAGE" sh -c "$(printf '%b' "$container_sh_cmd")" 2>&1) || rc=$?
     if [ $rc -ne 0 ]; then
       echo "WARN: docker run failed (exit $rc). Output:\n$container_out" >&2
       dr_attempt=$((dr_attempt + 1))
