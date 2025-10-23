@@ -485,6 +485,8 @@ if [ "$INTERACTIVE" = "guided" ]; then
     echo "     $CRON_COMMAND"
     STEP_NUM=$((STEP_NUM + 1))
   elif [ "$CRON_SCHEDULE" = "KEEP_EXISTING" ]; then
+    # Extract log file from existing cron or use default
+    LOG_FILE=$(echo "$EXISTING_CRON" | grep -oP '>> \K[^ ]+' || echo "/var/log/portainer_backup.log")
     echo "  $STEP_NUM. Keep existing cron job:"
     echo "     $EXISTING_CRON"
     STEP_NUM=$((STEP_NUM + 1))
@@ -592,7 +594,9 @@ LOGROTATE_EOF
     echo "✓ Automatic backups configured"
     echo "  Schedule: $CRON_SCHEDULE"
     echo "  Destination: $BACKUP_DIR"
-    echo "  Logs: $LOG_FILE"
+    if [ -n "$LOG_FILE" ]; then
+      echo "  Logs: $LOG_FILE"
+    fi
   fi
   
   
