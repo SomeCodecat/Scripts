@@ -209,12 +209,15 @@ TOTAL_STACKS=$(echo "$stacks_json" | jq '. | length')
 echo "INFO: Found $TOTAL_STACKS stacks in database"
 echo ""
 
-# Create temporary file to store stats across the loop
+# Create temporary files to store stats across the loop
 STATS_FILE=$(mktemp)
-trap "rm -f '$STATS_FILE'" EXIT
+FAILED_FILE=$(mktemp)
+CHANGED_FILE=$(mktemp)
+ENVS_FILE=$(mktemp)
+trap "rm -f '$STATS_FILE' '$FAILED_FILE' '$CHANGED_FILE' '$ENVS_FILE'" EXIT
 
-# Initialize stats file
-cat > "$STATS_FILE" << EOF
+# Initialize stats file with simple key=value format
+cat > "$STATS_FILE" << 'EOF'
 STATS_TOTAL=0
 STATS_SUCCESS=0
 STATS_FAILED=0
@@ -223,9 +226,6 @@ STATS_UNCHANGED=0
 STATS_COMPOSE_FILES=0
 STATS_ENV_FILES=0
 STATS_TOTAL_SIZE=0
-FAILED_STACKS=
-CHANGED_STACKS=
-STACKS_WITH_ENVS=
 EOF
 
 # Iterate stacks safely (one stack per line)
@@ -378,15 +378,8 @@ while read -r row; do
       echo "  ✗ Failed to copy and verify compose file after ${DOCKER_RETRIES:-2} attempts" >&2
       source "$STATS_FILE"
       STATS_FAILED=$((STATS_FAILED + 1))
-      FAILED_STACKS="${FAILED_STACKS}${name} (ID: $id): Failed to copy and verify compose file"$'\n'
       sed -i "s/^STATS_FAILED=.*/STATS_FAILED=$STATS_FAILED/" "$STATS_FILE"
-      echo "FAILED_STACKS<<EOF" > "${STATS_FILE}.tmp"
-      echo "$FAILED_STACKS" >> "${STATS_FILE}.tmp"
-      echo "EOF" >> "${STATS_FILE}.tmp"
-      grep -v "^FAILED_STACKS" "$STATS_FILE" > "${STATS_FILE}.new"
-      cat "${STATS_FILE}.tmp" >> "${STATS_FILE}.new"
-      mv "${STATS_FILE}.new" "$STATS_FILE"
-      rm -f "${STATS_FILE}.tmp"
+      echo "$name (ID: $id): Failed to copy and verify compose file" >> "$FAILED_FILE"
       continue
     fi
 
@@ -411,15 +404,8 @@ while read -r row; do
       if [ -n "$prev_backup" ] && [ -f "$prev_backup" ]; then
         if ! diff -q "$target_path" "$prev_backup" >/dev/null 2>&1; then
           STATS_CHANGED=$((STATS_CHANGED + 1))
-          CHANGED_STACKS="${CHANGED_STACKS}${name}"$'\n'
           sed -i "s/^STATS_CHANGED=.*/STATS_CHANGED=$STATS_CHANGED/" "$STATS_FILE"
-          echo "CHANGED_STACKS<<EOF" > "${STATS_FILE}.tmp"
-          echo "$CHANGED_STACKS" >> "${STATS_FILE}.tmp"
-          echo "EOF" >> "${STATS_FILE}.tmp"
-          grep -v "^CHANGED_STACKS" "$STATS_FILE" > "${STATS_FILE}.new"
-          cat "${STATS_FILE}.tmp" >> "${STATS_FILE}.new"
-          mv "${STATS_FILE}.new" "$STATS_FILE"
-          rm -f "${STATS_FILE}.tmp"
+          echo "$name" >> "$CHANGED_FILE"
           echo "  ⚠️  Compose file CHANGED (diff with previous backup)"
         else
           STATS_UNCHANGED=$((STATS_UNCHANGED + 1))
@@ -446,15 +432,8 @@ while read -r row; do
           echo "  ✓ Environment variables saved ($ENV_COUNT vars)"
           source "$STATS_FILE"
           STATS_ENV_FILES=$((STATS_ENV_FILES + 1))
-          STACKS_WITH_ENVS="${STACKS_WITH_ENVS}${name} ($ENV_COUNT vars)"$'\n'
           sed -i "s/^STATS_ENV_FILES=.*/STATS_ENV_FILES=$STATS_ENV_FILES/" "$STATS_FILE"
-          echo "STACKS_WITH_ENVS<<EOF" > "${STATS_FILE}.tmp"
-          echo "$STACKS_WITH_ENVS" >> "${STATS_FILE}.tmp"
-          echo "EOF" >> "${STATS_FILE}.tmp"
-          grep -v "^STACKS_WITH_ENVS" "$STATS_FILE" > "${STATS_FILE}.new"
-          cat "${STATS_FILE}.tmp" >> "${STATS_FILE}.new"
-          mv "${STATS_FILE}.new" "$STATS_FILE"
-          rm -f "${STATS_FILE}.tmp"
+          echo "$name ($ENV_COUNT vars)" >> "$ENVS_FILE"
           # Track env file size
           if [ -f "$env_path" ]; then
             file_size=$(stat -c%s "$env_path" 2>/dev/null || echo 0)
@@ -549,27 +528,27 @@ done < <(printf '%s\n' "$stacks_json" | jq -c '.[]')
 # Load final statistics from file
 source "$STATS_FILE"
 
-# Parse multiline variables from stats file
+# Parse arrays from separate files
 FAILED_STACKS_ARRAY=()
 CHANGED_STACKS_ARRAY=()
 STACKS_WITH_ENVS_ARRAY=()
 
-if [ -n "$FAILED_STACKS" ]; then
+if [ -f "$FAILED_FILE" ] && [ -s "$FAILED_FILE" ]; then
   while IFS= read -r line; do
-    [ -n "$line" ] && FAILED_STACKS_ARRAY+=("$line")
-  done <<< "$FAILED_STACKS"
+    FAILED_STACKS_ARRAY+=("$line")
+  done < "$FAILED_FILE"
 fi
 
-if [ -n "$CHANGED_STACKS" ]; then
+if [ -f "$CHANGED_FILE" ] && [ -s "$CHANGED_FILE" ]; then
   while IFS= read -r line; do
-    [ -n "$line" ] && CHANGED_STACKS_ARRAY+=("$line")
-  done <<< "$CHANGED_STACKS"
+    CHANGED_STACKS_ARRAY+=("$line")
+  done < "$CHANGED_FILE"
 fi
 
-if [ -n "$STACKS_WITH_ENVS" ]; then
+if [ -f "$ENVS_FILE" ] && [ -s "$ENVS_FILE" ]; then
   while IFS= read -r line; do
-    [ -n "$line" ] && STACKS_WITH_ENVS_ARRAY+=("$line")
-  done <<< "$STACKS_WITH_ENVS"
+    STACKS_WITH_ENVS_ARRAY+=("$line")
+  done < "$ENVS_FILE"
 fi
 
 echo ""
