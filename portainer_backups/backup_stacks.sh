@@ -138,6 +138,7 @@ else
 fi
 
 echo "===== Portainer stacks backup started: $(date --iso-8601=seconds) ====="
+echo ""
 
 # Show dry run status
 if [ "${DRY_RUN,,}" = "true" ] || [ "${DRY_RUN,,}" = "1" ]; then
@@ -172,10 +173,14 @@ if [ -z "$stacks_json" ] || [ "$stacks_json" = "[]" ]; then
   exit 1
 fi
 
-echo "INFO: Found $(echo "$stacks_json" | jq '. | length') stacks in database"
+TOTAL_STACKS=$(echo "$stacks_json" | jq '. | length')
+echo "INFO: Found $TOTAL_STACKS stacks in database"
+echo ""
 
 # Iterate stacks safely (one stack per line)
+CURRENT_STACK=0
 printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
+  CURRENT_STACK=$((CURRENT_STACK + 1))
   # Extract stack information from database JSON
   id="$(printf '%s' "$row" | jq -r '.Id')"
   name="$(printf '%s' "$row" | jq -r '.Name')"
@@ -226,7 +231,9 @@ printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
   env_path="$stack_dir/$env_filename"
   json_path="$stack_dir/$json_filename"
 
-  echo "Backing up stack id=$id name='$name' -> $target_path"
+  echo "─────────────────────────────────────────────────────────────"
+  echo "Stack: $name (ID: $id)"
+  echo "  → $target_path"
 
   # Before copying, ensure there's enough free space on the target mount
   if [ "${MIN_FREE_BYTES:-0}" -gt 0 ]; then
@@ -311,16 +318,16 @@ printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
     sleep ${DOCKER_BACKOFF_SEC:-5}
   done
     if [ $copy_ok -ne 0 ]; then
-      echo "ERROR: failed to copy and verify compose file for stack '$name' (id=$id) after ${DOCKER_RETRIES:-2} attempts" >&2
+      echo "  ✗ Failed to copy and verify compose file after ${DOCKER_RETRIES:-2} attempts" >&2
       continue
     fi
 
-    echo "OK: wrote $target_path"
+    echo "  ✓ Compose file saved"
 
   # Back up env variables from database if enabled
   if [ "${BACKUP_ENVS:-false}" = "true" ] || [ "${BACKUP_ENVS:-false}" = "1" ]; then
     if [ "${DRY_RUN,,}" = "true" ] || [ "${DRY_RUN,,}" = "1" ]; then
-      echo "DRY RUN: would extract env variables from database to $env_path"
+      echo "  ○ DRY RUN: would extract environment variables"
     else
       # Save full stack JSON from database
       printf '%s\n' "$stack_data" > "$json_path" 2>/dev/null || true
@@ -329,11 +336,18 @@ printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
       # Format: [{"name":"VAR","value":"val"},...] or ["VAR=val",...]
       if printf '%s\n' "$stack_data" | jq -r '.Env[]? | if type=="string" then . else ((.name//.Name) + "=" + (.value//.Value//"")) end' > "$env_path" 2>/dev/null; then
         chmod 600 "$env_path" || true
-        echo "OK: extracted environment variables to $env_path"
+        ENV_COUNT=$(wc -l < "$env_path" 2>/dev/null || echo 0)
+        if [ "$ENV_COUNT" -gt 0 ]; then
+          echo "  ✓ Environment variables saved ($ENV_COUNT vars)"
+        else
+          echo "  ○ No environment variables found"
+          rm -f "$env_path" || true
+        fi
       else
         # No env vars or extraction failed
         : > "$env_path" || true
         rm -f "$env_path" || true
+        echo "  ○ No environment variables found"
       fi
     fi
   fi
@@ -410,4 +424,8 @@ printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
   fi
 done
 
-echo "===== Portainer stacks backup finished: $(date --iso-8601=seconds) ====="
+echo ""
+echo "═════════════════════════════════════════════════════════════"
+echo "✓ Portainer stacks backup finished: $(date --iso-8601=seconds)"
+echo "═════════════════════════════════════════════════════════════"
+echo ""
