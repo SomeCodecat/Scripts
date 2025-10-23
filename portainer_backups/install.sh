@@ -310,10 +310,33 @@ if [ "$INTERACTIVE" = "guided" ]; then
   echo "💡 Tip: Press Enter to accept defaults shown in [brackets]"
   echo ""
   
+  # === DETECT EXISTING CONFIGURATION ===
+  
+  # Check for existing cron job to extract current settings
+  EXISTING_CRON=$(crontab -l 2>/dev/null | grep "backup_stacks.sh" || true)
+  CURRENT_BACKUP_DIR=""
+  CURRENT_BACKUP_ENVS=""
+  
+  if [ -n "$EXISTING_CRON" ]; then
+    echo "📋 Existing configuration detected"
+    # Extract backup directory from cron command
+    CURRENT_BACKUP_DIR=$(echo "$EXISTING_CRON" | grep -oP '\-d\s+\K[^\s]+' || true)
+    # Check if --backup-envs flag is present
+    if echo "$EXISTING_CRON" | grep -q '\-\-backup-envs'; then
+      CURRENT_BACKUP_ENVS="yes"
+    fi
+    echo ""
+  fi
+  
   # === COLLECT CONFIGURATION (don't execute yet) ===
   
   # Backup directory
-  DEFAULT_BACKUP_DIR="/var/backups/portainer"
+  if [ -n "$CURRENT_BACKUP_DIR" ]; then
+    DEFAULT_BACKUP_DIR="$CURRENT_BACKUP_DIR"
+    echo "Current backup directory: $CURRENT_BACKUP_DIR"
+  else
+    DEFAULT_BACKUP_DIR="/var/backups/portainer"
+  fi
   read -p "Enter backup directory path [$DEFAULT_BACKUP_DIR]: " BACKUP_DIR
   BACKUP_DIR="${BACKUP_DIR:-$DEFAULT_BACKUP_DIR}"
   
@@ -329,47 +352,82 @@ if [ "$INTERACTIVE" = "guided" ]; then
   # Cron schedule
   echo ""
   CRON_SCHEDULE=""
+  EXISTING_CRON=""
+  CURRENT_CRON_SCHEDULE=""
   if [ "$CRON_AVAILABLE" = false ]; then
     echo "⚠ cron is not available, skipping schedule setup"
   else
-    echo "Common schedules:"
-    echo "  1) Daily at 3:00 AM       - 0 3 * * *  [default]"
-    echo "  2) Every 6 hours          - 0 */6 * * *"
-    echo "  3) Every 12 hours         - 0 */12 * * *"
-    echo "  4) Weekly (Sunday 2 AM)   - 0 2 * * 0"
-    echo "  5) Custom cron expression"
-    echo "  6) Skip (configure manually later)"
-    echo ""
-    read -p "Choose schedule [1-6] (default: 1): " SCHEDULE_CHOICE
-    SCHEDULE_CHOICE="${SCHEDULE_CHOICE:-1}"
+    # Check for existing cron job
+    EXISTING_CRON=$(crontab -l 2>/dev/null | grep "backup_stacks.sh" || true)
     
-    case $SCHEDULE_CHOICE in
-      1) CRON_SCHEDULE="0 3 * * *" ;;
-      2) CRON_SCHEDULE="0 */6 * * *" ;;
-      3) CRON_SCHEDULE="0 */12 * * *" ;;
-      4) CRON_SCHEDULE="0 2 * * 0" ;;
-      5)
-        read -p "Enter custom cron expression: " CRON_SCHEDULE
-        ;;
-      6)
-        CRON_SCHEDULE=""
-        ;;
-      *)
-        echo "⚠ Invalid choice, skipping cron setup"
-        CRON_SCHEDULE=""
-        ;;
-    esac
+    if [ -n "$EXISTING_CRON" ]; then
+      # Extract the schedule part (first 5 fields)
+      CURRENT_CRON_SCHEDULE=$(echo "$EXISTING_CRON" | awk '{print $1" "$2" "$3" "$4" "$5}')
+      echo "Existing cron job found:"
+      echo "  Schedule: $CURRENT_CRON_SCHEDULE"
+      echo "  Full: $EXISTING_CRON"
+      echo ""
+      read -p "Update existing cron schedule? [Y/n]: " UPDATE_CRON
+      UPDATE_CRON="${UPDATE_CRON:-Y}"
+      
+      if [[ ! "$UPDATE_CRON" =~ ^[Yy]$ ]] && [[ -n "$UPDATE_CRON" ]]; then
+        echo "Keeping existing cron schedule"
+        CRON_SCHEDULE="KEEP_EXISTING"
+      fi
+    fi
+    
+    if [ "$CRON_SCHEDULE" != "KEEP_EXISTING" ]; then
+      if [ -n "$CURRENT_CRON_SCHEDULE" ]; then
+        echo "Current schedule: $CURRENT_CRON_SCHEDULE"
+        echo ""
+      fi
+      echo "Common schedules:"
+      echo "  1) Daily at 3:00 AM       - 0 3 * * *  [default]"
+      echo "  2) Every 6 hours          - 0 */6 * * *"
+      echo "  3) Every 12 hours         - 0 */12 * * *"
+      echo "  4) Weekly (Sunday 2 AM)   - 0 2 * * 0"
+      echo "  5) Custom cron expression"
+      echo "  6) Skip (configure manually later)"
+      echo ""
+      read -p "Choose schedule [1-6] (default: 1): " SCHEDULE_CHOICE
+      SCHEDULE_CHOICE="${SCHEDULE_CHOICE:-1}"
+      
+      case $SCHEDULE_CHOICE in
+        1) CRON_SCHEDULE="0 3 * * *" ;;
+        2) CRON_SCHEDULE="0 */6 * * *" ;;
+        3) CRON_SCHEDULE="0 */12 * * *" ;;
+        4) CRON_SCHEDULE="0 2 * * 0" ;;
+        5)
+          read -p "Enter custom cron expression: " CRON_SCHEDULE
+          ;;
+        6)
+          CRON_SCHEDULE=""
+          ;;
+        *)
+          echo "⚠ Invalid choice, skipping cron setup"
+          CRON_SCHEDULE=""
+          ;;
+      esac
+    fi
   fi
   
   # Environment variables
   ENVS_FLAG=""
-  if [ -n "$CRON_SCHEDULE" ]; then
+  if [ -n "$CRON_SCHEDULE" ] && [ "$CRON_SCHEDULE" != "KEEP_EXISTING" ]; then
     echo ""
-    read -p "Backup environment variables too? [Y/n]: " BACKUP_ENVS
-    BACKUP_ENVS="${BACKUP_ENVS:-Y}"
+    if [ "$CURRENT_BACKUP_ENVS" = "yes" ]; then
+      echo "Current setting: Backup environment variables enabled"
+      read -p "Backup environment variables too? [Y/n]: " BACKUP_ENVS
+      BACKUP_ENVS="${BACKUP_ENVS:-Y}"
+    else
+      read -p "Backup environment variables too? [Y/n]: " BACKUP_ENVS
+      BACKUP_ENVS="${BACKUP_ENVS:-Y}"
+    fi
     if [[ "$BACKUP_ENVS" =~ ^[Yy]$ ]] || [[ -z "$BACKUP_ENVS" ]]; then
       ENVS_FLAG=" --backup-envs"
     fi
+  elif [ "$CRON_SCHEDULE" = "KEEP_EXISTING" ] && [ "$CURRENT_BACKUP_ENVS" = "yes" ]; then
+    ENVS_FLAG=" --backup-envs"
   fi
   
   # Log rotation
@@ -416,11 +474,19 @@ if [ "$INTERACTIVE" = "guided" ]; then
     STEP_NUM=$((STEP_NUM + 1))
   fi
   
-  if [ -n "$CRON_SCHEDULE" ]; then
+  if [ -n "$CRON_SCHEDULE" ] && [ "$CRON_SCHEDULE" != "KEEP_EXISTING" ]; then
     LOG_FILE="/var/log/portainer_backup.log"
     CRON_COMMAND="$CRON_SCHEDULE $DEST_DIR/backup_stacks.sh -d $BACKUP_DIR$ENVS_FLAG >> $LOG_FILE 2>&1"
-    echo "  $STEP_NUM. Add cron job to root's crontab:"
+    if [ -n "$EXISTING_CRON" ]; then
+      echo "  $STEP_NUM. Update cron job in root's crontab:"
+    else
+      echo "  $STEP_NUM. Add cron job to root's crontab:"
+    fi
     echo "     $CRON_COMMAND"
+    STEP_NUM=$((STEP_NUM + 1))
+  elif [ "$CRON_SCHEDULE" = "KEEP_EXISTING" ]; then
+    echo "  $STEP_NUM. Keep existing cron job:"
+    echo "     $EXISTING_CRON"
     STEP_NUM=$((STEP_NUM + 1))
   fi
   
@@ -468,17 +534,24 @@ if [ "$INTERACTIVE" = "guided" ]; then
     echo "✓ Created backup directory: $BACKUP_DIR"
   fi
   
-  # Add cron job
-  if [ -n "$CRON_SCHEDULE" ]; then
+  # Add or update cron job
+  if [ -n "$CRON_SCHEDULE" ] && [ "$CRON_SCHEDULE" != "KEEP_EXISTING" ]; then
     # Create temp file with new crontab
     TEMP_CRON=$(mktemp)
     crontab -l 2>/dev/null | grep -v "backup_stacks.sh" > "$TEMP_CRON" || true
     echo "$CRON_COMMAND" >> "$TEMP_CRON"
     crontab "$TEMP_CRON"
     rm -f "$TEMP_CRON"
-    echo "✓ Added cron job"
+    
+    if [ -n "$EXISTING_CRON" ]; then
+      echo "✓ Updated cron job"
+    else
+      echo "✓ Added cron job"
+    fi
     echo "  View with: sudo crontab -l"
     echo "  Logs: $LOG_FILE"
+  elif [ "$CRON_SCHEDULE" = "KEEP_EXISTING" ]; then
+    echo "✓ Kept existing cron job"
   fi
   
   # Setup logrotate
