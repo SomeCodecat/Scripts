@@ -209,9 +209,29 @@ TOTAL_STACKS=$(echo "$stacks_json" | jq '. | length')
 echo "INFO: Found $TOTAL_STACKS stacks in database"
 echo ""
 
+# Create temporary file to store stats across the loop
+STATS_FILE=$(mktemp)
+trap "rm -f '$STATS_FILE'" EXIT
+
+# Initialize stats file
+cat > "$STATS_FILE" << EOF
+STATS_TOTAL=0
+STATS_SUCCESS=0
+STATS_FAILED=0
+STATS_CHANGED=0
+STATS_UNCHANGED=0
+STATS_COMPOSE_FILES=0
+STATS_ENV_FILES=0
+STATS_TOTAL_SIZE=0
+FAILED_STACKS=
+CHANGED_STACKS=
+STACKS_WITH_ENVS=
+EOF
+
 # Iterate stacks safely (one stack per line)
+# Use process substitution to avoid subshell and preserve variables
 CURRENT_STACK=0
-printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
+while read -r row; do
   CURRENT_STACK=$((CURRENT_STACK + 1))
   # Extract stack information from database JSON
   id="$(printf '%s' "$row" | jq -r '.Id')"
@@ -268,7 +288,9 @@ printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
   echo "  → $target_path"
 
   # Track this stack
+  source "$STATS_FILE"
   STATS_TOTAL=$((STATS_TOTAL + 1))
+  sed -i "s/^STATS_TOTAL=.*/STATS_TOTAL=$STATS_TOTAL/" "$STATS_FILE"
 
   # Before copying, ensure there's enough free space on the target mount
   if [ "${MIN_FREE_BYTES:-0}" -gt 0 ]; then
@@ -354,19 +376,32 @@ printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
   done
     if [ $copy_ok -ne 0 ]; then
       echo "  ✗ Failed to copy and verify compose file after ${DOCKER_RETRIES:-2} attempts" >&2
+      source "$STATS_FILE"
       STATS_FAILED=$((STATS_FAILED + 1))
-      FAILED_STACKS+=("$name (ID: $id): Failed to copy and verify compose file")
+      FAILED_STACKS="${FAILED_STACKS}${name} (ID: $id): Failed to copy and verify compose file"$'\n'
+      sed -i "s/^STATS_FAILED=.*/STATS_FAILED=$STATS_FAILED/" "$STATS_FILE"
+      echo "FAILED_STACKS<<EOF" > "${STATS_FILE}.tmp"
+      echo "$FAILED_STACKS" >> "${STATS_FILE}.tmp"
+      echo "EOF" >> "${STATS_FILE}.tmp"
+      grep -v "^FAILED_STACKS" "$STATS_FILE" > "${STATS_FILE}.new"
+      cat "${STATS_FILE}.tmp" >> "${STATS_FILE}.new"
+      mv "${STATS_FILE}.new" "$STATS_FILE"
+      rm -f "${STATS_FILE}.tmp"
       continue
     fi
 
     echo "  ✓ Compose file saved"
+    source "$STATS_FILE"
     STATS_SUCCESS=$((STATS_SUCCESS + 1))
     STATS_COMPOSE_FILES=$((STATS_COMPOSE_FILES + 1))
+    sed -i "s/^STATS_SUCCESS=.*/STATS_SUCCESS=$STATS_SUCCESS/" "$STATS_FILE"
+    sed -i "s/^STATS_COMPOSE_FILES=.*/STATS_COMPOSE_FILES=$STATS_COMPOSE_FILES/" "$STATS_FILE"
     
     # Track file size for reporting
     if [ -f "$target_path" ]; then
       file_size=$(stat -c%s "$target_path" 2>/dev/null || echo 0)
       STATS_TOTAL_SIZE=$((STATS_TOTAL_SIZE + file_size))
+      sed -i "s/^STATS_TOTAL_SIZE=.*/STATS_TOTAL_SIZE=$STATS_TOTAL_SIZE/" "$STATS_FILE"
     fi
     
     # Check if file changed compared to previous backup (for change detection)
@@ -376,10 +411,19 @@ printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
       if [ -n "$prev_backup" ] && [ -f "$prev_backup" ]; then
         if ! diff -q "$target_path" "$prev_backup" >/dev/null 2>&1; then
           STATS_CHANGED=$((STATS_CHANGED + 1))
-          CHANGED_STACKS+=("$name")
+          CHANGED_STACKS="${CHANGED_STACKS}${name}"$'\n'
+          sed -i "s/^STATS_CHANGED=.*/STATS_CHANGED=$STATS_CHANGED/" "$STATS_FILE"
+          echo "CHANGED_STACKS<<EOF" > "${STATS_FILE}.tmp"
+          echo "$CHANGED_STACKS" >> "${STATS_FILE}.tmp"
+          echo "EOF" >> "${STATS_FILE}.tmp"
+          grep -v "^CHANGED_STACKS" "$STATS_FILE" > "${STATS_FILE}.new"
+          cat "${STATS_FILE}.tmp" >> "${STATS_FILE}.new"
+          mv "${STATS_FILE}.new" "$STATS_FILE"
+          rm -f "${STATS_FILE}.tmp"
           echo "  ⚠️  Compose file CHANGED (diff with previous backup)"
         else
           STATS_UNCHANGED=$((STATS_UNCHANGED + 1))
+          sed -i "s/^STATS_UNCHANGED=.*/STATS_UNCHANGED=$STATS_UNCHANGED/" "$STATS_FILE"
           echo "  ○ No changes detected (identical to previous backup)"
         fi
       fi
@@ -400,12 +444,23 @@ printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
         ENV_COUNT=$(wc -l < "$env_path" 2>/dev/null || echo 0)
         if [ "$ENV_COUNT" -gt 0 ]; then
           echo "  ✓ Environment variables saved ($ENV_COUNT vars)"
+          source "$STATS_FILE"
           STATS_ENV_FILES=$((STATS_ENV_FILES + 1))
-          STACKS_WITH_ENVS+=("$name ($ENV_COUNT vars)")
+          STACKS_WITH_ENVS="${STACKS_WITH_ENVS}${name} ($ENV_COUNT vars)"$'\n'
+          sed -i "s/^STATS_ENV_FILES=.*/STATS_ENV_FILES=$STATS_ENV_FILES/" "$STATS_FILE"
+          echo "STACKS_WITH_ENVS<<EOF" > "${STATS_FILE}.tmp"
+          echo "$STACKS_WITH_ENVS" >> "${STATS_FILE}.tmp"
+          echo "EOF" >> "${STATS_FILE}.tmp"
+          grep -v "^STACKS_WITH_ENVS" "$STATS_FILE" > "${STATS_FILE}.new"
+          cat "${STATS_FILE}.tmp" >> "${STATS_FILE}.new"
+          mv "${STATS_FILE}.new" "$STATS_FILE"
+          rm -f "${STATS_FILE}.tmp"
           # Track env file size
           if [ -f "$env_path" ]; then
             file_size=$(stat -c%s "$env_path" 2>/dev/null || echo 0)
             STATS_TOTAL_SIZE=$((STATS_TOTAL_SIZE + file_size))
+            sed -i "s/^STATS_TOTAL_SIZE=.*/STATS_TOTAL_SIZE=$STATS_TOTAL_SIZE/" "$STATS_FILE"
+          fi
           fi
         else
           echo "  ○ No environment variables found"
@@ -490,7 +545,33 @@ printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
       fi
     fi
   fi
-done
+done < <(printf '%s\n' "$stacks_json" | jq -c '.[]')
+
+# Load final statistics from file
+source "$STATS_FILE"
+
+# Parse multiline variables from stats file
+FAILED_STACKS_ARRAY=()
+CHANGED_STACKS_ARRAY=()
+STACKS_WITH_ENVS_ARRAY=()
+
+if [ -n "$FAILED_STACKS" ]; then
+  while IFS= read -r line; do
+    [ -n "$line" ] && FAILED_STACKS_ARRAY+=("$line")
+  done <<< "$FAILED_STACKS"
+fi
+
+if [ -n "$CHANGED_STACKS" ]; then
+  while IFS= read -r line; do
+    [ -n "$line" ] && CHANGED_STACKS_ARRAY+=("$line")
+  done <<< "$CHANGED_STACKS"
+fi
+
+if [ -n "$STACKS_WITH_ENVS" ]; then
+  while IFS= read -r line; do
+    [ -n "$line" ] && STACKS_WITH_ENVS_ARRAY+=("$line")
+  done <<< "$STACKS_WITH_ENVS"
+fi
 
 echo ""
 echo "═════════════════════════════════════════════════════════════"
@@ -598,28 +679,28 @@ elif [ "$REPORT_MODE" = "detailed" ]; then
   fi
   
   # Show stacks with environment variables
-  if [ ${#STACKS_WITH_ENVS[@]} -gt 0 ]; then
+  if [ ${#STACKS_WITH_ENVS_ARRAY[@]} -gt 0 ]; then
     echo ""
     echo "📋 Stacks with Environment Variables:"
-    for stack_env in "${STACKS_WITH_ENVS[@]}"; do
+    for stack_env in "${STACKS_WITH_ENVS_ARRAY[@]}"; do
       echo "  • $stack_env"
     done
   fi
   
   # Show changed stacks if change detection enabled
-  if [ "${SHOW_CHANGES}" = "true" ] && [ ${#CHANGED_STACKS[@]} -gt 0 ]; then
+  if [ "${SHOW_CHANGES}" = "true" ] && [ ${#CHANGED_STACKS_ARRAY[@]} -gt 0 ]; then
     echo ""
     echo "⚠️  Changed Stacks:"
-    for changed in "${CHANGED_STACKS[@]}"; do
+    for changed in "${CHANGED_STACKS_ARRAY[@]}"; do
       echo "  • $changed"
     done
   fi
   
   # Show failed stacks if any
-  if [ ${#FAILED_STACKS[@]} -gt 0 ]; then
+  if [ ${#FAILED_STACKS_ARRAY[@]} -gt 0 ]; then
     echo ""
     echo "❌ Failed Stacks:"
-    for failed in "${FAILED_STACKS[@]}"; do
+    for failed in "${FAILED_STACKS_ARRAY[@]}"; do
       echo "  • $failed"
     done
     echo ""
