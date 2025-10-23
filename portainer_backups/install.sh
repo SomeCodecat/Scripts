@@ -22,14 +22,12 @@ Examples:
   sudo ./install.sh -i /opt/scripts              # Interactive with custom install dir
 
 Interactive mode will:
-  1. Check and install dependencies (jq, logrotate)
+  1. Check and install dependencies (jq, cron, logrotate)
   2. Install the script
-  3. Create the backup directory [default: /var/backups/portainer]
-  4. Set up a cron schedule [default: Daily at 3 AM]
-  5. Configure log rotation [default: Yes]
-  6. Optionally test the backup immediately [default: No]
-  
-  Tip: Press Enter to accept defaults (shown in [brackets])
+  3. Collect configuration (backup dir, schedule, etc.)
+  4. Show review of all changes
+  5. Apply changes after confirmation
+  6. Optionally test the backup
 
 Quick mode (no -i):
   1. Checks and installs dependencies
@@ -50,7 +48,6 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     -h|--help)
-      # Already handled above
       shift
       ;;
     *)
@@ -65,7 +62,10 @@ DEST_DIR="$INSTALL_DIR"
 echo "Installing portainer backup script to $DEST_DIR"
 echo ""
 
-# Check and install dependencies
+# ============================================================================
+# DEPENDENCY CHECKS
+# ============================================================================
+
 echo "Checking dependencies..."
 
 # Check for jq
@@ -84,16 +84,12 @@ if ! command -v jq >/dev/null 2>&1; then
     elif command -v pacman >/dev/null 2>&1; then
       sudo pacman -S --noconfirm jq
     else
-      echo "❌ Could not detect package manager. Please install jq manually:"
-      echo "   Debian/Ubuntu: sudo apt-get install jq"
-      echo "   RHEL/CentOS:   sudo yum install jq"
-      echo "   Fedora:        sudo dnf install jq"
-      echo "   Arch:          sudo pacman -S jq"
+      echo "❌ Could not detect package manager. Please install jq manually."
       exit 1
     fi
     echo "✓ jq installed successfully"
   else
-    echo "❌ jq is required. Please install it manually and run this script again."
+    echo "❌ jq is required. Please install it and run this script again."
     exit 1
   fi
 else
@@ -103,11 +99,50 @@ fi
 # Check for docker
 if ! command -v docker >/dev/null 2>&1; then
   echo "❌ docker is not installed or not in PATH"
-  echo "   This script requires Docker to access Portainer data."
-  echo "   Please install Docker first: https://docs.docker.com/engine/install/"
+  echo "   This script requires Docker. Install from: https://docs.docker.com/engine/install/"
   exit 1
 else
   echo "✓ docker is installed"
+fi
+
+# Check for cron/crontab (needed for scheduling)
+CRON_AVAILABLE=false
+if command -v crontab >/dev/null 2>&1; then
+  echo "✓ cron is installed"
+  CRON_AVAILABLE=true
+else
+  echo "⚠ cron is not installed (needed for scheduling)"
+  read -p "Install cron now? [Y/n]: " INSTALL_CRON
+  INSTALL_CRON="${INSTALL_CRON:-Y}"
+  if [[ "$INSTALL_CRON" =~ ^[Yy]$ ]] || [[ -z "$INSTALL_CRON" ]]; then
+    echo "Installing cron..."
+    if command -v apt-get >/dev/null 2>&1; then
+      sudo apt-get install -y cron
+      sudo systemctl enable cron 2>/dev/null || true
+      sudo systemctl start cron 2>/dev/null || true
+    elif command -v yum >/dev/null 2>&1; then
+      sudo yum install -y cronie
+      sudo systemctl enable crond 2>/dev/null || true
+      sudo systemctl start crond 2>/dev/null || true
+    elif command -v dnf >/dev/null 2>&1; then
+      sudo dnf install -y cronie
+      sudo systemctl enable crond 2>/dev/null || true
+      sudo systemctl start crond 2>/dev/null || true
+    elif command -v pacman >/dev/null 2>&1; then
+      sudo pacman -S --noconfirm cronie
+      sudo systemctl enable cronie 2>/dev/null || true
+      sudo systemctl start cronie 2>/dev/null || true
+    else
+      echo "⚠ Could not install cron. Scheduling will not be available."
+      CRON_AVAILABLE=false
+    fi
+    if command -v crontab >/dev/null 2>&1; then
+      echo "✓ cron installed successfully"
+      CRON_AVAILABLE=true
+    fi
+  else
+    echo "⚠ Skipping cron (automatic scheduling won't be available)"
+  fi
 fi
 
 # Check for logrotate (optional but recommended)
@@ -130,8 +165,7 @@ else
     elif command -v pacman >/dev/null 2>&1; then
       sudo pacman -S --noconfirm logrotate
     else
-      echo "⚠ Could not detect package manager. Skipping logrotate installation."
-      echo "   You can install it manually later if needed."
+      echo "⚠ Could not install logrotate. You can install it manually later."
       LOGROTATE_AVAILABLE=false
     fi
     if command -v logrotate >/dev/null 2>&1; then
@@ -139,20 +173,22 @@ else
       LOGROTATE_AVAILABLE=true
     fi
   else
-    echo "⚠ Skipping logrotate installation (you can set it up manually later)"
+    echo "⚠ Skipping logrotate (you can set it up manually later)"
   fi
 fi
 
 echo ""
 
+# ============================================================================
+# INSTALL SCRIPT
+# ============================================================================
+
 if [ "$DEST_DIR" = "/usr/local/bin" ]; then
-  # Simple install - just copy the script to PATH
   sudo cp -a "$(dirname "$0")/backup_stacks.sh" "$DEST_DIR/backup_stacks.sh"
   sudo chmod 755 "$DEST_DIR/backup_stacks.sh"
   sudo chown root:root "$DEST_DIR/backup_stacks.sh"
   echo "✓ Script installed to $DEST_DIR/backup_stacks.sh"
 else
-  # Custom directory install - create structure
   sudo mkdir -p "$DEST_DIR"
   sudo cp -a "$(dirname "$0")/backup_stacks.sh" "$DEST_DIR/backup_stacks.sh"
   sudo chmod 755 "$DEST_DIR/backup_stacks.sh"
@@ -164,56 +200,40 @@ echo ""
 echo "✓ Script installed successfully!"
 echo ""
 
-# Interactive setup mode
+# ============================================================================
+# INTERACTIVE SETUP MODE
+# ============================================================================
+
 if [ "$INTERACTIVE" = true ]; then
   echo "═══════════════════════════════════════════════════════════"
-  echo "Interactive Setup - Backup Directory & Cron Schedule"
+  echo "Interactive Setup - Configuration"
   echo "═══════════════════════════════════════════════════════════"
   echo ""
   echo "💡 Tip: Press Enter to accept defaults shown in [brackets]"
   echo ""
-  echo "Defaults:"
-  echo "  • Dependencies: Install jq and logrotate automatically"
-  echo "  • Backup directory: /var/backups/portainer"
-  echo "  • Cron schedule: Daily at 3:00 AM"
-  echo "  • Environment variables: Yes"
-  echo "  • Log rotation: Yes (14 days)"
-  echo "  • Test backup: No"
-  echo ""
-  echo "───────────────────────────────────────────────────────────"
-  echo ""
   
-  # Step 1: Create backup directory
-  echo "Script will be installed to: $DEST_DIR/backup_stacks.sh"
-  echo ""
+  # === COLLECT CONFIGURATION (don't execute yet) ===
   
+  # Backup directory
   DEFAULT_BACKUP_DIR="/var/backups/portainer"
   read -p "Enter backup directory path [$DEFAULT_BACKUP_DIR]: " BACKUP_DIR
   BACKUP_DIR="${BACKUP_DIR:-$DEFAULT_BACKUP_DIR}"
   
-  if [ -z "$BACKUP_DIR" ]; then
-    echo "⚠ No backup directory specified, skipping..."
-  else
-    if [ -d "$BACKUP_DIR" ]; then
-      echo "✓ Directory already exists: $BACKUP_DIR"
-    else
-      read -p "Create directory $BACKUP_DIR? [Y/n]: " CREATE_DIR
-      CREATE_DIR="${CREATE_DIR:-Y}"
-      if [[ "$CREATE_DIR" =~ ^[Yy]$ ]] || [[ -z "$CREATE_DIR" ]]; then
-        sudo mkdir -p "$BACKUP_DIR"
-        sudo chmod 755 "$BACKUP_DIR"
-        echo "✓ Created backup directory: $BACKUP_DIR"
-      else
-        echo "⚠ Directory not created, you'll need to create it manually"
-      fi
+  WILL_CREATE_DIR=false
+  if [ -n "$BACKUP_DIR" ] && [ ! -d "$BACKUP_DIR" ]; then
+    read -p "Create directory $BACKUP_DIR? [Y/n]: " CREATE_DIR
+    CREATE_DIR="${CREATE_DIR:-Y}"
+    if [[ "$CREATE_DIR" =~ ^[Yy]$ ]] || [[ -z "$CREATE_DIR" ]]; then
+      WILL_CREATE_DIR=true
     fi
-    
-    # Step 2: Configure cron
-    echo ""
-    echo "───────────────────────────────────────────────────────────"
-    echo "Cron Schedule Setup"
-    echo "───────────────────────────────────────────────────────────"
-    echo ""
+  fi
+  
+  # Cron schedule
+  echo ""
+  CRON_SCHEDULE=""
+  if [ "$CRON_AVAILABLE" = false ]; then
+    echo "⚠ cron is not available, skipping schedule setup"
+  else
     echo "Common schedules:"
     echo "  1) Daily at 3:00 AM       - 0 3 * * *  [default]"
     echo "  2) Every 6 hours          - 0 */6 * * *"
@@ -234,7 +254,6 @@ if [ "$INTERACTIVE" = true ]; then
         read -p "Enter custom cron expression: " CRON_SCHEDULE
         ;;
       6)
-        echo "⚠ Skipping cron setup"
         CRON_SCHEDULE=""
         ;;
       *)
@@ -242,45 +261,120 @@ if [ "$INTERACTIVE" = true ]; then
         CRON_SCHEDULE=""
         ;;
     esac
-    
-    if [ -n "$CRON_SCHEDULE" ]; then
-      # Ask about options
-      echo ""
-      read -p "Backup environment variables too? [Y/n]: " BACKUP_ENVS
-      BACKUP_ENVS="${BACKUP_ENVS:-Y}"
-      ENVS_FLAG=""
-      if [[ "$BACKUP_ENVS" =~ ^[Yy]$ ]] || [[ -z "$BACKUP_ENVS" ]]; then
-        ENVS_FLAG=" --backup-envs"
-      fi
-      
-      # Create cron command
-      LOG_FILE="/var/log/portainer_backup.log"
-      CRON_COMMAND="$CRON_SCHEDULE $DEST_DIR/backup_stacks.sh -d $BACKUP_DIR$ENVS_FLAG >> $LOG_FILE 2>&1"
-      
-      echo ""
-      echo "Cron job to be added:"
-      echo "  $CRON_COMMAND"
-      echo ""
-      read -p "Add this to root's crontab? [Y/n]: " ADD_CRON
-      ADD_CRON="${ADD_CRON:-Y}"
-      
-      if [[ "$ADD_CRON" =~ ^[Yy]$ ]] || [[ -z "$ADD_CRON" ]]; then
-        # Add to crontab
-        (sudo crontab -l 2>/dev/null | grep -v "backup_stacks.sh"; echo "$CRON_COMMAND") | sudo crontab -
-        echo "✓ Cron job added successfully!"
-        echo ""
-        echo "View with: sudo crontab -l"
-        echo "Logs will be written to: $LOG_FILE"
-        
-        # Offer to set up logrotate
-        echo ""
-        if [ "$LOGROTATE_AVAILABLE" = true ]; then
-          read -p "Set up automatic log rotation? [Y/n]: " SETUP_LOGROTATE
-          SETUP_LOGROTATE="${SETUP_LOGROTATE:-Y}"
-          if [[ "$SETUP_LOGROTATE" =~ ^[Yy]$ ]] || [[ -z "$SETUP_LOGROTATE" ]]; then
-            LOGROTATE_CONF="/etc/logrotate.d/portainer-backup"
-            sudo tee "$LOGROTATE_CONF" > /dev/null << LOGROTATE_EOF
-$LOG_FILE {
+  fi
+  
+  # Environment variables
+  ENVS_FLAG=""
+  if [ -n "$CRON_SCHEDULE" ]; then
+    echo ""
+    read -p "Backup environment variables too? [Y/n]: " BACKUP_ENVS
+    BACKUP_ENVS="${BACKUP_ENVS:-Y}"
+    if [[ "$BACKUP_ENVS" =~ ^[Yy]$ ]] || [[ -z "$BACKUP_ENVS" ]]; then
+      ENVS_FLAG=" --backup-envs"
+    fi
+  fi
+  
+  # Log rotation
+  SETUP_LOGROTATE="N"
+  if [ "$LOGROTATE_AVAILABLE" = true ] && [ -n "$CRON_SCHEDULE" ]; then
+    echo ""
+    read -p "Set up automatic log rotation? [Y/n]: " SETUP_LOGROTATE
+    SETUP_LOGROTATE="${SETUP_LOGROTATE:-Y}"
+  fi
+  
+  # Test backup
+  echo ""
+  read -p "Run a test backup after setup? [y/N]: " RUN_TEST
+  RUN_TEST="${RUN_TEST:-N}"
+  
+  # === SHOW REVIEW ===
+  echo ""
+  echo "═══════════════════════════════════════════════════════════"
+  echo "Review Configuration"
+  echo "═══════════════════════════════════════════════════════════"
+  echo ""
+  echo "The following changes will be made:"
+  echo ""
+  
+  STEP_NUM=1
+  
+  # Show what will be created/configured
+  if [ "$WILL_CREATE_DIR" = true ]; then
+    echo "  $STEP_NUM. Create backup directory:"
+    echo "     sudo mkdir -p $BACKUP_DIR"
+    echo "     sudo chmod 755 $BACKUP_DIR"
+    STEP_NUM=$((STEP_NUM + 1))
+  elif [ -d "$BACKUP_DIR" ]; then
+    echo "  $STEP_NUM. Use existing backup directory:"
+    echo "     $BACKUP_DIR"
+    STEP_NUM=$((STEP_NUM + 1))
+  fi
+  
+  if [ -n "$CRON_SCHEDULE" ]; then
+    LOG_FILE="/var/log/portainer_backup.log"
+    CRON_COMMAND="$CRON_SCHEDULE $DEST_DIR/backup_stacks.sh -d $BACKUP_DIR$ENVS_FLAG >> $LOG_FILE 2>&1"
+    echo "  $STEP_NUM. Add cron job to root's crontab:"
+    echo "     $CRON_COMMAND"
+    STEP_NUM=$((STEP_NUM + 1))
+  fi
+  
+  if [[ "$SETUP_LOGROTATE" =~ ^[Yy]$ ]]; then
+    echo "  $STEP_NUM. Create logrotate configuration:"
+    echo "     /etc/logrotate.d/portainer-backup"
+    echo "     (rotates daily, keeps 14 days, compresses old logs)"
+    STEP_NUM=$((STEP_NUM + 1))
+  fi
+  
+  if [[ "$RUN_TEST" =~ ^[Yy]$ ]]; then
+    echo "  $STEP_NUM. Run test backup:"
+    echo "     $DEST_DIR/backup_stacks.sh -d $BACKUP_DIR$ENVS_FLAG"
+    STEP_NUM=$((STEP_NUM + 1))
+  fi
+  
+  if [ $STEP_NUM -eq 1 ]; then
+    echo "  (No additional changes)"
+  fi
+  
+  echo ""
+  echo "═══════════════════════════════════════════════════════════"
+  read -p "Apply these changes? [Y/n]: " CONFIRM
+  CONFIRM="${CONFIRM:-Y}"
+  
+  if [[ ! "$CONFIRM" =~ ^[Yy]$ ]] && [[ -n "$CONFIRM" ]]; then
+    echo ""
+    echo "❌ Installation cancelled. No changes were made."
+    echo "   The script is installed but not configured."
+    echo "   You can run './install.sh -i' again to configure it."
+    exit 0
+  fi
+  
+  # === EXECUTE CHANGES ===
+  echo ""
+  echo "───────────────────────────────────────────────────────────"
+  echo "Applying changes..."
+  echo "───────────────────────────────────────────────────────────"
+  echo ""
+  
+  # Create directory
+  if [ "$WILL_CREATE_DIR" = true ]; then
+    sudo mkdir -p "$BACKUP_DIR"
+    sudo chmod 755 "$BACKUP_DIR"
+    echo "✓ Created backup directory: $BACKUP_DIR"
+  fi
+  
+  # Add cron job
+  if [ -n "$CRON_SCHEDULE" ]; then
+    (sudo crontab -l 2>/dev/null | grep -v "backup_stacks.sh"; echo "$CRON_COMMAND") | sudo crontab -
+    echo "✓ Added cron job"
+    echo "  View with: sudo crontab -l"
+    echo "  Logs: $LOG_FILE"
+  fi
+  
+  # Setup logrotate
+  if [[ "$SETUP_LOGROTATE" =~ ^[Yy]$ ]]; then
+    LOGROTATE_CONF="/etc/logrotate.d/portainer-backup"
+    sudo tee "$LOGROTATE_CONF" > /dev/null << 'LOGROTATE_EOF'
+/var/log/portainer_backup.log {
     daily
     rotate 14
     compress
@@ -290,70 +384,57 @@ $LOG_FILE {
     create 644 root root
 }
 LOGROTATE_EOF
-            echo "✓ Logrotate configured at $LOGROTATE_CONF"
-            echo "  - Rotates daily, keeps 14 days of logs"
-            echo "  - Old logs are compressed to save space"
-          else
-            echo "⚠ Warning: Log file will grow indefinitely without rotation!"
-            echo "  Consider setting up logrotate manually or redirecting to /dev/null"
-          fi
-        else
-          echo "⚠ logrotate is not installed, skipping log rotation setup"
-          echo "  Install logrotate and run: sudo logrotate /etc/logrotate.d/portainer-backup"
-          echo "  Or redirect logs to /dev/null in your cron job"
-        fi
-      else
-        echo "⚠ Cron job not added. To add manually:"
-        echo "  sudo crontab -e"
-        echo "  Then add: $CRON_COMMAND"
-      fi
-    fi
-    
-    # Step 3: Test backup
+    echo "✓ Configured logrotate: $LOGROTATE_CONF"
+  fi
+  
+  # Run test backup
+  if [[ "$RUN_TEST" =~ ^[Yy]$ ]]; then
     echo ""
     echo "───────────────────────────────────────────────────────────"
-    read -p "Run a test backup now? [y/N]: " RUN_TEST
-    RUN_TEST="${RUN_TEST:-N}"
-    
-    if [[ "$RUN_TEST" =~ ^[Yy]$ ]]; then
-      echo ""
-      echo "Running test backup..."
-      BACKUP_CMD="$DEST_DIR/backup_stacks.sh -d $BACKUP_DIR"
-      if [[ "$BACKUP_ENVS" =~ ^[Yy] ]]; then
-        BACKUP_CMD="$BACKUP_CMD --backup-envs"
-      fi
-      echo "Command: $BACKUP_CMD"
-      echo ""
-      sudo $BACKUP_CMD
-    fi
+    echo "Running test backup..."
+    echo "───────────────────────────────────────────────────────────"
+    BACKUP_CMD="$DEST_DIR/backup_stacks.sh -d $BACKUP_DIR$ENVS_FLAG"
+    echo "Command: $BACKUP_CMD"
+    echo ""
+    sudo $BACKUP_CMD
   fi
   
   echo ""
   echo "═══════════════════════════════════════════════════════════"
-  echo "Setup complete!"
+  echo "Setup Complete!"
   echo "═══════════════════════════════════════════════════════════"
+  echo ""
+  if [ -n "$CRON_SCHEDULE" ]; then
+    echo "✓ Automatic backups configured"
+    echo "  Schedule: $CRON_SCHEDULE"
+    echo "  Destination: $BACKUP_DIR"
+    echo "  Logs: $LOG_FILE"
+  fi
+  
   
 else
   # Non-interactive mode - show examples
   echo "═══════════════════════════════════════════════════════════"
-  echo "The script reads directly from Portainer database - no API needed!"
+  echo "Installation complete!"
   echo "═══════════════════════════════════════════════════════════"
+  echo ""
+  echo "The script reads directly from Portainer database - no API needed!"
   echo ""
   echo "Quick start examples:"
   echo ""
-  echo "  # Backup to network location with environment variables"
-  echo "  backup_stacks.sh -d /mnt/nas/portainer-backups --backup-envs"
-  echo ""
-  echo "  # Backup to local directory"
+  echo "  # Backup to local directory with environment variables"
   echo "  backup_stacks.sh -d /backup/portainer --backup-envs"
   echo ""
-  echo "  # Test with dry run first"
-  echo "  backup_stacks.sh -d /mnt/nas/backups --backup-envs --dry-run"
+  echo "  # Backup to network location"
+  echo "  backup_stacks.sh -d /mnt/nas/portainer-backups --backup-envs"
+  echo ""
+  echo "  # Test first with dry run"
+  echo "  backup_stacks.sh -d /backup/portainer --backup-envs --dry-run"
   echo ""
   echo "For all options: backup_stacks.sh --help"
   echo ""
   echo "───────────────────────────────────────────────────────────"
-  echo "To configure automatically, run:"
+  echo "To configure automatically with guided setup:"
   echo "  sudo ./install.sh -i"
   echo "───────────────────────────────────────────────────────────"
 fi
