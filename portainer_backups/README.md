@@ -1,78 +1,151 @@
-# Portainer stacks backup
+# Portainer Stacks Backup
 
-This directory contains a script to back up Portainer stack compose files and environment variables into organized backup directories.
+**Simple, reliable backups of Portainer stacks - no API key required!**
 
-Files
+This script backs up Portainer stack compose files and environment variables by reading directly from the Portainer database.
 
-- `backup_stacks.sh` - main backup script. Use command line arguments to configure behavior.
-- `install.sh` - helper to install the script into `/opt/portainer_backups/` and set permissions.
+## Why This Approach?
 
-Usage
+- ✅ **No API dependency**: Works without Portainer running or API access
+- ✅ **More reliable**: Direct access to the source database
+- ✅ **Complete data**: Includes environment variables from the database
+- ✅ **Simpler setup**: Just point to the Docker volume - no API keys needed
+- ✅ **Offline backups**: Can backup even when Portainer is stopped
 
-Run the script with command line arguments:
+## Installation
 
-```bash
-# Basic usage - backup compose files only
-./backup_stacks.sh -u https://portainer.local:9443 -k your_api_key_here
-
-# Full backup with environment variables and timestamps
-./backup_stacks.sh \
-  --url https://portainer.local:9443 \
-  --api-key your_api_key_here \
-  --backup-envs \
-  --timestamps \
-  --keep-count 14
-
-# Simple mode with custom backup directory
-./backup_stacks.sh \
-  -u https://portainer.local:9443 \
-  -k your_api_key_here \
-  --simple \
-  --backup-dir /backup/portainer
-
-# Dry run to test configuration
-./backup_stacks.sh -u https://portainer.local:9443 -k your_api_key_here --dry-run
-```
-
-Cron
-
-Use the following crontab line to run the backup daily at 03:00:
+### Option 1: Interactive Install (Easiest - Recommended)
 
 ```bash
-0 3 * * * /opt/portainer_backups/backup_stacks.sh -u https://portainer.local:9443 -k your_api_key -e -t >> /var/log/portainer_backup.log 2>&1
+# Clone or download the script
+cd /tmp
+git clone https://github.com/SomeCodecat/Scripts.git
+cd Scripts/portainer_backups
+
+# Run interactive installer (does everything for you)
+sudo ./install.sh -i
 ```
 
-Command line options
+The interactive installer will:
 
-- `-u, --url`: Portainer URL (required)
-- `-k, --api-key`: Portainer API key (required)
-- `-d, --backup-dir`: Directory where backups are stored
+1. ✅ Install the script to `/usr/local/bin` (or custom directory)
+2. ✅ Create your backup directory (asks for path)
+3. ✅ Set up automatic cron schedule (you choose frequency)
+4. ✅ Optionally run a test backup immediately
+
+### Option 2: Quick Install (Script Only)
+
+```bash
+# Install to /usr/local/bin (default, adds to PATH)
+sudo ./install.sh
+
+# Or install to custom directory
+sudo ./install.sh /opt/scripts
+```
+
+You'll need to manually create backup directory and set up cron.
+
+### Option 3: Manual Install
+
+```bash
+# Just copy the script anywhere you want
+sudo cp backup_stacks.sh /usr/local/bin/
+sudo chmod 755 /usr/local/bin/backup_stacks.sh
+
+# Or run directly from current directory (no installation)
+./backup_stacks.sh -d /mnt/nas/backups --backup-envs
+```
+
+## Quick Start
+
+**Note: You must specify a backup destination with `-d`**
+
+```bash
+# Basic usage - backup to local directory
+./backup_stacks.sh -d /backup/portainer
+
+# With environment variables (recommended)
+./backup_stacks.sh -d /backup/portainer --backup-envs
+
+# Backup to network location
+./backup_stacks.sh -d /mnt/nas/portainer-backups --backup-envs
+
+# Keep more backups (default is 7)
+./backup_stacks.sh -d /backup/portainer --backup-envs --keep-count 14
+
+# Test first with dry run
+./backup_stacks.sh -d /backup/portainer --backup-envs --dry-run
+```
+
+## Scheduling with Cron
+
+Run backups automatically at 3 AM daily:
+
+```bash
+# Run daily at 3 AM, backup to local directory
+0 3 * * * /usr/local/bin/backup_stacks.sh -d /backup/portainer -e >> /var/log/portainer_backup.log 2>&1
+
+# Or backup to network location
+0 3 * * * /usr/local/bin/backup_stacks.sh -d /mnt/nas/portainer-backups -e >> /var/log/portainer_backup.log 2>&1
+```
+
+## Command Line Options
+
+**Required:**
+
+- `-d, --backup-dir DIR`: **Where to save backups** (network path, local directory, etc.)
+
+**Optional:**
+
+- `-v, --volume NAME`: Portainer data volume name (default: portainer_data)
+- `-e, --backup-envs`: Backup environment variables from database
 - `-s, --simple`: Use simple mode (stack ID filenames instead of names)
-- `-t, --timestamps`: Append timestamps to filenames for historical backups
-- `-e, --backup-envs`: Back up environment variables via Portainer API
+- `-c, --keep-count N`: Keep last N backup runs per stack (default: 7)
 - `-n, --dry-run`: Show what would be done without making changes
-- `-c, --keep-count N`: Keep last N backup runs per stack (rotation)
-- `-h, --help`: Show full help with all options
+- `-h, --help`: Show full help message
 
-File structure
+## Backup to Network Location
 
-Normal mode creates folders like:
+The script works perfectly with network-mounted storage:
 
+```bash
+# Mount your NAS/network share
+sudo mkdir -p /mnt/nas
+sudo mount -t cifs //nas.local/backups /mnt/nas -o credentials=/root/.smbcredentials
+
+# Backup directly to network location
+backup_stacks.sh -d /mnt/nas/portainer-backups --backup-envs
+
+# Add to cron for automatic backups
+0 3 * * * /usr/local/bin/backup_stacks.sh -d /mnt/nas/portainer-backups -e >> /var/log/portainer_backup.log 2>&1
 ```
+
+**Alternative: Two-stage backup** (faster, more reliable)
+
+```bash
+# Backup to local first (fast), then sync to network (resilient)
+backup_stacks.sh -d /var/backups/portainer -e && rsync -av /var/backups/portainer/ /mnt/nas/portainer-backups/
+```
+
+## File structure
+
+All backup files now include timestamps for proper rotation:
+
+```text
 /opt/portainer_backups/backups/
 ├── my-app/
-│   ├── my-app.yml
-│   ├── my-app.env
-│   └── my-app.stack.json
+│   ├── my-app_2025-10-23_030000.yml
+│   ├── my-app_2025-10-23_030000.env
+│   └── my-app_2025-10-23_030000.stack.json
 └── web-frontend/
-    ├── web-frontend.yml
-    ├── web-frontend.env
-    └── web-frontend.stack.json
+    ├── web-frontend_2025-10-23_030000.yml
+    ├── web-frontend_2025-10-23_030000.env
+    └── web-frontend_2025-10-23_030000.stack.json
 ```
 
-Simple mode with timestamps:
+Simple mode uses stack IDs as folder names:
 
-```
+```text
 /opt/portainer_backups/backups/
 ├── stack_a1b2c3d4/
 │   ├── stack_a1b2c3d4_2025-10-23_030000.yml
@@ -84,23 +157,59 @@ Simple mode with timestamps:
     └── stack_e5f6g7h8_2025-10-23_030000.stack.json
 ```
 
-Notes & assumptions
+## Requirements
 
-- The script uses `jq` and `docker` and expects a Docker volume named `portainer_data` containing Portainer's data.
-- It expects compose files under `/data/compose/<STACK_ID>/docker-compose.yml` or `.yaml` inside the volume. Adjust with `--compose-prefix` if needed.
-- Filenames are sanitized by replacing non-alphanumeric characters with underscores.
+- `jq` - JSON parsing (install with `apt install jq` or `yum install jq`)
+- `docker` - Docker CLI access
+- Access to Portainer data volume (usually `portainer_data`)
 
-Checksum verification
+## Notes
 
-- After copying each compose file the script attempts to verify integrity by comparing a checksum calculated inside the helper container with the copied file on the host. If the container-side checksum cannot be computed (older base images), the script falls back to a host-side size/exists check. If verification fails the copy is retried up to the configured retry count.
+- Stack names are taken from the Portainer database (what you see in the UI)
+- Filenames are sanitized by replacing non-alphanumeric characters with underscores
+- All backup files include timestamps for history tracking and rotation
+- Checksums verify file integrity after copying
+- Retries automatically handle temporary failures
 
-Features
+## How It Works
 
-- **Environment variables backup**: Use `--backup-envs` to save stack environment variables alongside compose files
-- **Timestamped backups**: Use `--timestamps` to create historical copies with timestamps
-- **Rotation**: Use `--keep-count N` to automatically remove old backups (keeps last N per stack)
-- **Dry run**: Use `--dry-run` to test configuration without making changes
-- **Retry logic**: Configurable retries for network and file operations with backoff
-- **Free space checks**: Prevents backups when disk space is low
-- **Checksum verification**: Ensures file integrity after copying
-- **Simple mode**: Use `--simple` for stack ID-based filenames instead of names
+The script reads directly from Portainer's BoltDB database (`/data/portainer.db`) to extract:
+
+1. **Stack information**: ID, name, project path
+2. **Environment variables**: Stored in the `Env` array for each stack
+3. **Stack metadata**: Creation date, update info, etc.
+
+It then:
+
+- Copies compose files from `/data/compose/<stack-id>/` using Docker containers
+- Extracts environment variables from the database JSON
+- Organizes everything in per-stack folders with timestamps
+- Automatically rotates old backups
+
+## What Gets Backed Up
+
+For each stack, the script creates:
+
+```text
+/backup/portainer/
+└── stack-name/
+    ├── stack-name_2025-10-23_030000.yml           # Compose file
+    ├── stack-name_2025-10-23_030000.env           # Environment variables (if --backup-envs)
+    └── stack-name_2025-10-23_030000.stack.json    # Full stack metadata from database
+```
+
+## Security Notes
+
+**Environment variables often contain sensitive data!**
+
+- The `.env` files contain passwords, API keys, and other secrets
+- Backup files are created with `600` permissions (owner read/write only)
+- Store backups in a secure location
+- Consider encrypting backup directories
+- Never commit `.env` files to version control
+
+## Advanced Options
+
+- **Simple mode** (`--simple`): Use stack IDs instead of names for folder structure
+- **Custom rotation** (`--keep-count`): Adjust how many backup runs to keep per stack
+- **Dry run** (`--dry-run`): Test the backup process without making changes

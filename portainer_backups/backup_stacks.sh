@@ -5,40 +5,26 @@ IFS=$'\n\t'
 # Show usage information
 show_usage() {
   cat << EOF
-Usage: $0 [OPTIONS]
+Usage: backup_stacks.sh -d BACKUP_DIR [OPTIONS]
 
-Backup Portainer stacks (compose files and environment variables).
+Backup Portainer stacks by reading directly from the Portainer database.
+
+REQUIRED:
+  -d, --backup-dir DIR       Backup directory (where to save backups)
 
 OPTIONS:
-  -u, --url URL              Portainer URL (default: https://portainer.example:9443)
-  -k, --api-key KEY          Portainer API key (required)
-  -d, --backup-dir DIR       Backup directory (default: /opt/portainer_backups/backups)
   -v, --volume NAME          Portainer data volume name (default: portainer_data)
-  -i, --image IMAGE          Alpine image for file operations (default: alpine:3.19)
-  -s, --simple               Use simple mode (stack ID filenames)
-  -p, --prefix PREFIX        Simple mode filename prefix (default: stack_)
-  -t, --timestamps           Append timestamps to filenames
-  -f, --timestamp-fmt FMT    Timestamp format (default: _%F_%H%M%S)
-  -e, --backup-envs          Backup environment variables via API
+  -s, --simple               Use simple mode (stack ID filenames instead of names)
+  -e, --backup-envs          Backup environment variables from database
   -n, --dry-run              Show what would be done without making changes
   -c, --keep-count N         Keep last N backup runs per stack (default: 7)
-  -r, --curl-retries N       Curl retry attempts (default: 3)
-  -b, --curl-backoff N       Curl backoff seconds (default: 5)
-  -m, --min-free-bytes N     Minimum free bytes required (default: 10485760)
-  -l, --log-max-bytes N      Log rotation size limit (default: 5242880)
-  -o, --docker-retries N     Docker copy retry attempts (default: 2)
-  -w, --docker-backoff N     Docker backoff seconds (default: 5)
-  -g, --log-file FILE        Log file path (default: /var/log/portainer_backup.log)
-  -a, --api-header HEADER    API key header name (default: X-API-Key)
-  -x, --compose-prefix PATH  Compose directory prefix (default: /data/compose)
-  -y, --compose-candidates LIST  Space-separated compose filenames (default: docker-compose.yml docker-compose.yaml)
-  -z, --curl-opts OPTS       Additional curl options
   -h, --help                 Show this help message
 
 EXAMPLES:
-  $0 -u https://portainer.local:9443 -k myapikey123 -d /backup/portainer
-  $0 --url https://portainer.local:9443 --api-key myapikey123 --simple --timestamps
-  $0 -u https://portainer.local:9443 -k myapikey123 --dry-run
+  backup_stacks.sh -d /backup/portainer -e
+  backup_stacks.sh --backup-dir /backup/portainer --simple --backup-envs
+  backup_stacks.sh -v portainer_data -d /backup/portainer --dry-run
+  backup_stacks.sh -d /backup/portainer --simple --keep-count 14
 
 EOF
 }
@@ -47,14 +33,6 @@ EOF
 parse_args() {
   while [[ $# -gt 0 ]]; do
     case $1 in
-      -u|--url)
-        PORTAINER_URL="$2"
-        shift 2
-        ;;
-      -k|--api-key)
-        PORTAINER_API_KEY="$2"
-        shift 2
-        ;;
       -d|--backup-dir)
         BACKUP_DIR="$2"
         shift 2
@@ -63,25 +41,9 @@ parse_args() {
         PORTAINER_VOLUME="$2"
         shift 2
         ;;
-      -i|--image)
-        ALPINE_IMAGE="$2"
-        shift 2
-        ;;
       -s|--simple)
         SIMPLE_MODE="true"
         shift
-        ;;
-      -p|--prefix)
-        SIMPLE_PREFIX="$2"
-        shift 2
-        ;;
-      -t|--timestamps)
-        USE_TIMESTAMPS="true"
-        shift
-        ;;
-      -f|--timestamp-fmt)
-        TIMESTAMP_FMT="$2"
-        shift 2
         ;;
       -e|--backup-envs)
         BACKUP_ENVS="true"
@@ -93,50 +55,6 @@ parse_args() {
         ;;
       -c|--keep-count)
         KEEP_COUNT="$2"
-        shift 2
-        ;;
-      -r|--curl-retries)
-        CURL_RETRIES="$2"
-        shift 2
-        ;;
-      -b|--curl-backoff)
-        CURL_BACKOFF_SEC="$2"
-        shift 2
-        ;;
-      -m|--min-free-bytes)
-        MIN_FREE_BYTES="$2"
-        shift 2
-        ;;
-      -l|--log-max-bytes)
-        LOG_MAX_BYTES="$2"
-        shift 2
-        ;;
-      -o|--docker-retries)
-        DOCKER_RETRIES="$2"
-        shift 2
-        ;;
-      -w|--docker-backoff)
-        DOCKER_BACKOFF_SEC="$2"
-        shift 2
-        ;;
-      -g|--log-file)
-        LOG_FILE="$2"
-        shift 2
-        ;;
-      -a|--api-header)
-        API_KEY_HEADER="$2"
-        shift 2
-        ;;
-      -x|--compose-prefix)
-        COMPOSE_DIR_PREFIX="$2"
-        shift 2
-        ;;
-      -y|--compose-candidates)
-        COMPOSE_CANDIDATES="$2"
-        shift 2
-        ;;
-      -z|--curl-opts)
-        CURL_OPTS="$2"
         shift 2
         ;;
       -h|--help)
@@ -154,38 +72,34 @@ parse_args() {
 
 # Set defaults
 # Set defaults
-PORTAINER_URL="${PORTAINER_URL:-https://portainer.example:9443}"
-PORTAINER_API_KEY="${PORTAINER_API_KEY:-}"
-BACKUP_DIR="${BACKUP_DIR:-/opt/portainer_backups/backups}"
+BACKUP_DIR="${BACKUP_DIR:-}"  # No default - user must specify
 PORTAINER_VOLUME="${PORTAINER_VOLUME:-portainer_data}"
-ALPINE_IMAGE="${ALPINE_IMAGE:-alpine:3.19}"
 SIMPLE_MODE="${SIMPLE_MODE:-false}"
-SIMPLE_PREFIX="${SIMPLE_PREFIX:-stack_}"
-API_KEY_HEADER="${API_KEY_HEADER:-X-API-Key}"
-COMPOSE_DIR_PREFIX="${COMPOSE_DIR_PREFIX:-/data/compose}"
-COMPOSE_CANDIDATES="${COMPOSE_CANDIDATES:-docker-compose.yml docker-compose.yaml}"
-CONTAINER_PORTAINER_MOUNT="${CONTAINER_PORTAINER_MOUNT:-/data}"
-CONTAINER_BACKUP_MOUNT="${CONTAINER_BACKUP_MOUNT:-/backups}"
-USE_TIMESTAMPS="${USE_TIMESTAMPS:-false}"
-TIMESTAMP_FMT="${TIMESTAMP_FMT:-_%F_%H%M%S}"
 BACKUP_ENVS="${BACKUP_ENVS:-false}"
 DRY_RUN="${DRY_RUN:-false}"
 KEEP_COUNT="${KEEP_COUNT:-7}"
-CURL_RETRIES="${CURL_RETRIES:-3}"
-CURL_BACKOFF_SEC="${CURL_BACKOFF_SEC:-5}"
-MIN_FREE_BYTES="${MIN_FREE_BYTES:-10485760}"
-LOG_MAX_BYTES="${LOG_MAX_BYTES:-5242880}"
-DOCKER_RETRIES="${DOCKER_RETRIES:-2}"
-DOCKER_BACKOFF_SEC="${DOCKER_BACKOFF_SEC:-5}"
-LOG_FILE="${LOG_FILE:-/var/log/portainer_backup.log}"
-CURL_OPTS="${CURL_OPTS:-}"
+
+# Internal constants (not configurable via CLI)
+ALPINE_IMAGE="alpine:3.19"
+SIMPLE_PREFIX="stack_"
+PORTAINER_DB_PATH="/data/portainer.db"
+COMPOSE_DIR_PREFIX="/data/compose"
+COMPOSE_CANDIDATES="docker-compose.yml docker-compose.yaml"
+CONTAINER_PORTAINER_MOUNT="/data"
+CONTAINER_BACKUP_MOUNT="/backups"
+DOCKER_RETRIES=2
+DOCKER_BACKOFF_SEC=5
 
 # Parse command line arguments
 parse_args "$@"
 
 # Validate required arguments
-if [ -z "$PORTAINER_API_KEY" ]; then
-  echo "ERROR: API key is required. Use -k/--api-key or set PORTAINER_API_KEY environment variable." >&2
+if [ -z "$BACKUP_DIR" ]; then
+  echo "ERROR: Backup directory is required. Use -d/--backup-dir to specify where to save backups." >&2
+  echo "" >&2
+  echo "Example: $0 -d /mnt/nas/portainer-backups --backup-envs" >&2
+  echo "" >&2
+  echo "For help: $0 --help" >&2
   exit 1
 fi
 
@@ -195,7 +109,8 @@ command -v docker >/dev/null 2>&1 || { echo "ERROR: docker is not installed or n
 
 # Ensure backup directory exists
 if ! mkdir -p "$BACKUP_DIR"; then
-  echo "ERROR: cannot create backup directory '$BACKUP_DIR'"
+  echo "ERROR: cannot create backup directory '$BACKUP_DIR'" >&2
+  echo "Make sure the path is valid and you have write permissions." >&2
   exit 1
 fi
 
@@ -206,52 +121,41 @@ if [ "${DRY_RUN,,}" = "true" ] || [ "${DRY_RUN,,}" = "1" ]; then
   echo "DRY RUN MODE: No files will be created, modified, or deleted"
 fi
 
-# If LOG_FILE is set and LOG_MAX_BYTES>0, perform simple rotation to limit size.
-if [ -n "${LOG_FILE:-}" ] && [ "${LOG_MAX_BYTES:-0}" -gt 0 ]; then
-  if [ -f "$LOG_FILE" ]; then
-    log_size=$(stat -c%s "$LOG_FILE" 2>/dev/null || echo 0)
-    if [ "$log_size" -ge "$LOG_MAX_BYTES" ]; then
-      timestamp=$(date +%Y%m%d%H%M%S)
-      mv "$LOG_FILE" "${LOG_FILE}.${timestamp}"
-      : > "$LOG_FILE" || true
-    fi
-  else
-    : > "$LOG_FILE" || true
-  fi
-fi
+# Read stacks from Portainer database
+echo "INFO: Reading stacks from Portainer database..."
 
-# Query Portainer stacks
-# Query Portainer stacks with retries/backoff
-stacks_json=""
-attempt=0
-while [ $attempt -le ${CURL_RETRIES:-3} ]; do
-  if stacks_json="$(curl -s -k ${CURL_OPTS:-} -H "${API_KEY_HEADER}: $PORTAINER_API_KEY" "$PORTAINER_URL/api/stacks")"; then
-    break
+# Extract stack JSON objects from the database using strings command
+# The database stores stack data as JSON strings that we can extract
+stacks_json=$(docker run --rm -v "$PORTAINER_VOLUME:$CONTAINER_PORTAINER_MOUNT" "$ALPINE_IMAGE" sh -c "
+  if [ ! -f '$PORTAINER_DB_PATH' ]; then
+    echo 'ERROR: Portainer database not found at $PORTAINER_DB_PATH' >&2
+    exit 1
   fi
-  attempt=$((attempt + 1))
-  echo "WARN: curl attempt $attempt failed, retrying in ${CURL_BACKOFF_SEC:-5}s..."
-  sleep ${CURL_BACKOFF_SEC:-5}
-done
-if [ -z "$stacks_json" ]; then
-  echo "ERROR: curl failed to fetch stacks after ${CURL_RETRIES:-3} attempts"
+  
+  # Extract all stack JSON objects from the database
+  # Stack entries start with {\"Id\":N,\"Name\":\"...\",\"Type\":2
+  strings '$PORTAINER_DB_PATH' | grep -E '^{\"Id\":[0-9]+,\"Name\":\"[^\"]+\",\"Type\":2' | jq -c '.' 2>/dev/null | jq -s '.'
+" 2>/dev/null)
+
+if [ -z "$stacks_json" ] || [ "$stacks_json" = "[]" ]; then
+  echo "ERROR: No stacks found in Portainer database"
   exit 1
 fi
 
-# Validate JSON
-if ! printf '%s' "$stacks_json" | jq -e . >/dev/null 2>&1; then
-  echo "ERROR: received invalid JSON from Portainer API"
-  exit 1
-fi
+echo "INFO: Found $(echo "$stacks_json" | jq '. | length') stacks in database"
 
 # Iterate stacks safely (one stack per line)
 printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
-  # Extract Id and Name (Portainer stack fields)
-  id="$(printf '%s' "$row" | jq -r '.Id // .id')"
-  name="$(printf '%s' "$row" | jq -r '.Name // .name')"
+  # Extract stack information from database JSON
+  id="$(printf '%s' "$row" | jq -r '.Id')"
+  name="$(printf '%s' "$row" | jq -r '.Name')"
+  
+  # Store the full row for later use (env vars extraction)
+  stack_data="$row"
 
-  # Fallbacks
+  # Validation
   if [ -z "$id" ] || [ "$id" = "null" ]; then
-    echo "WARN: skipping stack with missing Id (raw: $row)"
+    echo "WARN: skipping stack with missing Id"
     continue
   fi
   if [ -z "$name" ] || [ "$name" = "null" ]; then
@@ -283,17 +187,11 @@ printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
     echo "DRY RUN: would create directory '$stack_dir'"
   fi
 
-  # Optionally append timestamp
-  if [ "${USE_TIMESTAMPS,,}" = "true" ] || [ "${USE_TIMESTAMPS,,}" = "1" ]; then
-    ts=$(date +"${TIMESTAMP_FMT}")
-    target_filename="${base_filename}${ts}.yml"
-    env_filename="${base_filename}${ts}.env"
-    json_filename="${base_filename}${ts}.stack.json"
-  else
-    target_filename="${base_filename}.yml"
-    env_filename="${base_filename}.env"
-    json_filename="${base_filename}.stack.json"
-  fi
+  # Set filenames (always with timestamp for rotation)
+  ts=$(date +"_%F_%H%M%S")
+  target_filename="${base_filename}${ts}.yml"
+  env_filename="${base_filename}${ts}.env"
+  json_filename="${base_filename}${ts}.stack.json"
   target_path="$stack_dir/$target_filename"
   env_path="$stack_dir/$env_filename"
   json_path="$stack_dir/$json_filename"
@@ -318,7 +216,7 @@ printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
   container_sh_cmd+="  cp \"\$src\" \"${CONTAINER_BACKUP_MOUNT}/${base_filename}/$target_filename\" || exit 3\n"
     container_sh_cmd+="  size=\$(stat -c%s \"\$src\" 2>/dev/null || (ls -ln \"\$src\" | awk '{print \$5}'))\n"
     container_sh_cmd+="  if command -v sha256sum >/dev/null 2>&1; then checksum=\$(sha256sum \"\$src\" | awk '{print \$1}'); elif command -v shasum >/dev/null 2>&1; then checksum=\$(shasum -a 256 \"\$src\" | awk '{print \$1}'); else checksum=NO_CHECKSUM; fi\n"
-    container_sh_cmd+="  echo \"$checksum $size\"\n"
+    container_sh_cmd+="  echo \"\$checksum \$size\"\n"
     container_sh_cmd+="  exit 0\n"
     container_sh_cmd+="fi\n"
   done
@@ -389,38 +287,28 @@ printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
 
     echo "OK: wrote $target_path"
 
-  # Back up env variables via Portainer API if enabled
+  # Back up env variables from database if enabled
   if [ "${BACKUP_ENVS:-false}" = "true" ] || [ "${BACKUP_ENVS:-false}" = "1" ]; then
     if [ "${DRY_RUN,,}" = "true" ] || [ "${DRY_RUN,,}" = "1" ]; then
-      echo "DRY RUN: would fetch stack JSON and extract env variables to $env_path"
+      echo "DRY RUN: would extract env variables from database to $env_path"
     else
-      # Fetch stack JSON from Portainer and save raw
-      stack_json=""
-      sj_attempt=0
-      while [ $sj_attempt -le ${CURL_RETRIES:-3} ]; do
-        if stack_json="$(curl -s -k ${CURL_OPTS:-} -H "${API_KEY_HEADER}: $PORTAINER_API_KEY" "$PORTAINER_URL/api/stacks/$id")"; then
-          break
-        fi
-        sj_attempt=$((sj_attempt + 1))
-        sleep ${CURL_BACKOFF_SEC:-5}
-      done
-      if [ -n "$stack_json" ]; then
-        printf '%s\n' "$stack_json" > "$json_path" 2>/dev/null || true
-        # Try to extract envs: strings or objects
-        if printf '%s\n' "$stack_json" | jq -r '.Env[]? | if type=="string" then . else ((.name//.Name) + "=" + (.value//.Value//"")) end' > "$env_path" 2>/dev/null; then
-          chmod 600 "$env_path" || true
-        else
-          # if jq extraction failed, ensure an empty file isn't left
-          : > "$env_path" || true
-          rm -f "$env_path" || true
-        fi
+      # Save full stack JSON from database
+      printf '%s\n' "$stack_data" > "$json_path" 2>/dev/null || true
+      
+      # Extract environment variables from the Env array in the database JSON
+      # Format: [{"name":"VAR","value":"val"},...] or ["VAR=val",...]
+      if printf '%s\n' "$stack_data" | jq -r '.Env[]? | if type=="string" then . else ((.name//.Name) + "=" + (.value//.Value//"")) end' > "$env_path" 2>/dev/null; then
+        chmod 600 "$env_path" || true
+        echo "OK: extracted environment variables to $env_path"
       else
-        echo "WARN: could not fetch stack JSON for $id; skipping env backup" >&2
+        # No env vars or extraction failed
+        : > "$env_path" || true
+        rm -f "$env_path" || true
       fi
     fi
   fi
 
-  # Rotation: keep last N backup runs per stack (grouped by core filename)
+  # Rotation: keep last N backup runs per stack (grouped by timestamp)
   if [ "${KEEP_COUNT:-0}" -gt 0 ]; then
     if [ "${DRY_RUN,,}" = "true" ] || [ "${DRY_RUN,,}" = "1" ]; then
       echo "DRY RUN: would perform rotation in $stack_dir (keep ${KEEP_COUNT} runs)"
@@ -431,18 +319,11 @@ printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
           [ -e "$f" ] || continue
           name=$(basename -- "$f")
           
-          # Parse timestamp if USE_TIMESTAMPS is enabled
-          if [ "${USE_TIMESTAMPS,,}" = "true" ] || [ "${USE_TIMESTAMPS,,}" = "1" ]; then
-            # Extract timestamp pattern from filename
-            # Remove base_filename prefix and extension suffix to get timestamp part
-            temp="${name#${base_filename}}"
-            run_id="${temp%.*}"
-            if [ -z "$run_id" ]; then
-              run_id="notimestamp"
-            fi
-          else
-            # Group by core filename (without extension)
-            run_id="${name%.*}"
+          # Extract timestamp from filename (always present now)
+          temp="${name#${base_filename}}"
+          run_id="${temp%.*}"
+          if [ -z "$run_id" ]; then
+            run_id="notimestamp"
           fi
           
           # Track newest mtime for this run
@@ -472,18 +353,12 @@ printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
         [ -e "$f" ] || continue
         name=$(basename -- "$f")
         
-        # Parse timestamp if USE_TIMESTAMPS is enabled
-        if [ "${USE_TIMESTAMPS,,}" = "true" ] || [ "${USE_TIMESTAMPS,,}" = "1" ]; then
-          # Extract timestamp pattern from filename
-          # Remove base_filename prefix and extension suffix to get timestamp part
-          temp="${name#${base_filename}}"
-          run_id="${temp%.*}"
-          if [ -z "$run_id" ]; then
-            run_id="notimestamp"
-          fi
-        else
-          # Group by core filename (without extension)
-          run_id="${name%.*}"
+        # Extract timestamp from filename (always present)
+        # Remove base_filename prefix and extension suffix to get timestamp part
+        temp="${name#${base_filename}}"
+        run_id="${temp%.*}"
+        if [ -z "$run_id" ]; then
+          run_id="notimestamp"
         fi
         
         # Track newest mtime for this run
