@@ -6,7 +6,6 @@ Files
 
 - `backup_stacks.sh` - main backup script. Use command line arguments to configure behavior.
 - `install.sh` - helper to install the script into `/opt/portainer_backups/` and set permissions.
-- `backup_stacks.conf` - legacy configuration file (no longer used - script uses command line arguments).
 
 Usage
 
@@ -41,7 +40,7 @@ Use the following crontab line to run the backup daily at 03:00:
 Command line options
 
 - `-u, --url`: Portainer URL (required)
-- `-k, --api-key`: Portainer API key (required)  
+- `-k, --api-key`: Portainer API key (required)
 - `-d, --backup-dir`: Directory where backups are stored
 - `-s, --simple`: Use simple mode (stack ID filenames instead of names)
 - `-t, --timestamps`: Append timestamps to filenames for historical backups
@@ -53,6 +52,7 @@ Command line options
 File structure
 
 Normal mode creates folders like:
+
 ```
 /opt/portainer_backups/backups/
 ├── my-app/
@@ -66,6 +66,7 @@ Normal mode creates folders like:
 ```
 
 Simple mode with timestamps:
+
 ```
 /opt/portainer_backups/backups/
 ├── stack_a1b2c3d4/
