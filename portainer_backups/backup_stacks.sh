@@ -216,7 +216,7 @@ printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
   # It copies the first candidate compose file it finds and prints its checksum and size: "<checksum|NO_CHECKSUM> <size>"
   container_sh_cmd="set -e\n"
   for candidate in $COMPOSE_CANDIDATES; do
-    container_sh_cmd+="if [ -f \"${COMPOSE_DIR_PREFIX}/$id/$candidate\" ]; then src='${COMPOSE_DIR_PREFIX}/$id/$candidate'; fi\n"
+    container_sh_cmd+="if [ -f \"${COMPOSE_DIR_PREFIX}/$id/${candidate}\" ]; then src='${COMPOSE_DIR_PREFIX}/$id/${candidate}'; fi\n"
   done
   container_sh_cmd+="if [ -n \"\$src\" ]; then\n"
   container_sh_cmd+="  cp \"\$src\" \"${CONTAINER_BACKUP_MOUNT}/${base_filename}/$target_filename\" || exit 3\n"
