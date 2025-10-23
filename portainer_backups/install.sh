@@ -367,10 +367,10 @@ if [ "$INTERACTIVE" = "guided" ]; then
       echo "  Schedule: $CURRENT_CRON_SCHEDULE"
       echo "  Full: $EXISTING_CRON"
       echo ""
-      read -p "Update existing cron schedule? [Y/n]: " UPDATE_CRON
-      UPDATE_CRON="${UPDATE_CRON:-Y}"
+      read -p "Update existing cron schedule? [y/N]: " UPDATE_CRON
+      UPDATE_CRON="${UPDATE_CRON:-N}"
       
-      if [[ ! "$UPDATE_CRON" =~ ^[Yy]$ ]] && [[ -n "$UPDATE_CRON" ]]; then
+      if [[ ! "$UPDATE_CRON" =~ ^[Yy]$ ]]; then
         echo "Keeping existing cron schedule"
         CRON_SCHEDULE="KEEP_EXISTING"
       fi
