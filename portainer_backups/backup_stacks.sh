@@ -461,7 +461,6 @@ while read -r row; do
             STATS_TOTAL_SIZE=$((STATS_TOTAL_SIZE + file_size))
             sed -i "s/^STATS_TOTAL_SIZE=.*/STATS_TOTAL_SIZE=$STATS_TOTAL_SIZE/" "$STATS_FILE"
           fi
-          fi
         else
           echo "  ○ No environment variables found"
           rm -f "$env_path" || true
