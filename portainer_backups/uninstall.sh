@@ -27,7 +27,7 @@ if [ -f "/etc/logrotate.d/portainer-backup" ]; then
 fi
 
 if command -v crontab >/dev/null 2>&1; then
-  CRON_COUNT=$(sudo crontab -l 2>/dev/null | grep -c backup_stacks.sh || echo 0)
+  CRON_COUNT=$(sudo crontab -l 2>/dev/null | grep backup_stacks.sh | wc -l)
   if [ "$CRON_COUNT" -gt 0 ]; then
     echo "  ✓ Cron job(s) found ($CRON_COUNT):"
     sudo crontab -l 2>/dev/null | grep backup_stacks.sh | while read -r line; do
