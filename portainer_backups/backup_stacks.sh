@@ -217,14 +217,14 @@ printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
   container_sh_cmd="set -e\n"
   for candidate in $COMPOSE_CANDIDATES; do
     container_sh_cmd+="if [ -f \"${COMPOSE_DIR_PREFIX}/$id/$candidate\" ]; then src='${COMPOSE_DIR_PREFIX}/$id/$candidate'; fi\n"
+  done
   container_sh_cmd+="if [ -n \"\$src\" ]; then\n"
   container_sh_cmd+="  cp \"\$src\" \"${CONTAINER_BACKUP_MOUNT}/${base_filename}/$target_filename\" || exit 3\n"
-    container_sh_cmd+="  size=\$(stat -c%s \"\$src\" 2>/dev/null || (ls -ln \"\$src\" | awk '{print \$5}'))\n"
-    container_sh_cmd+="  if command -v sha256sum >/dev/null 2>&1; then checksum=\$(sha256sum \"\$src\" | awk '{print \$1}'); elif command -v shasum >/dev/null 2>&1; then checksum=\$(shasum -a 256 \"\$src\" | awk '{print \$1}'); else checksum=NO_CHECKSUM; fi\n"
-    container_sh_cmd+="  echo \"\$checksum \$size\"\n"
-    container_sh_cmd+="  exit 0\n"
-    container_sh_cmd+="fi\n"
-  done
+  container_sh_cmd+="  size=\$(stat -c%s \"\$src\" 2>/dev/null || (ls -ln \"\$src\" | awk '{print \$5}'))\n"
+  container_sh_cmd+="  if command -v sha256sum >/dev/null 2>&1; then checksum=\$(sha256sum \"\$src\" | awk '{print \$1}'); elif command -v shasum >/dev/null 2>&1; then checksum=\$(shasum -a 256 \"\$src\" | awk '{print \$1}'); else checksum=NO_CHECKSUM; fi\n"
+  container_sh_cmd+="  echo \"\$checksum \$size\"\n"
+  container_sh_cmd+="  exit 0\n"
+  container_sh_cmd+="fi\n"
   container_sh_cmd+="echo 'ERROR: compose file not found for stack id $id' 1>&2\nexit 2\n"
 
   # Run an ephemeral container to copy the file (mount portainer_data read-only, backup dir read-write)
