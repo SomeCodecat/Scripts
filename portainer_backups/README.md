@@ -10,9 +10,11 @@ This script backs up Portainer stack compose files and environment variables by 
   - [📑 Table of Contents](#-table-of-contents)
   - [Why This Approach?](#why-this-approach)
   - [Installation](#installation)
-    - [Option 1: Interactive Install (Easiest - Recommended) ⚡](#option-1-interactive-install-easiest---recommended-)
-    - [Option 2: Quick Install (Script Only, Manual Config)](#option-2-quick-install-script-only-manual-config)
-    - [Option 3: Manual Install](#option-3-manual-install)
+    - [Quick Start - Choose Your Setup](#quick-start---choose-your-setup)
+    - [Option 1: Guided Setup (Easiest - Recommended) ⚡](#option-1-guided-setup-easiest---recommended-)
+    - [Option 2: Simple Install (Script Only, Manual Config)](#option-2-simple-install-script-only-manual-config)
+    - [Option 3: Update Mode (Update Script, Keep Config)](#option-3-update-mode-update-script-keep-config)
+    - [Option 4: Manual Install](#option-4-manual-install)
   - [Uninstallation](#uninstallation)
   - [Quick Start](#quick-start)
   - [Scheduling with Cron](#scheduling-with-cron)
@@ -51,7 +53,21 @@ This script backs up Portainer stack compose files and environment variables by 
 
 ## Installation
 
-### Option 1: Interactive Install (Easiest - Recommended) ⚡
+### Quick Start - Choose Your Setup
+
+The installer offers three modes:
+
+```bash
+# Interactive menu (recommended - choose mode on the fly)
+sudo ./install.sh
+
+# Or skip menu with flags:
+sudo ./install.sh -i   # Guided setup (full interactive)
+sudo ./install.sh -s   # Simple install (script only)
+sudo ./install.sh -u   # Update script (keep config)
+```
+
+### Option 1: Guided Setup (Easiest - Recommended) ⚡
 
 **⏱️ 10-second setup:** Just press Enter to accept smart defaults!
 
@@ -61,57 +77,73 @@ cd /tmp
 git clone https://github.com/SomeCodecat/Scripts.git
 cd Scripts/portainer_backups
 
-# Run interactive installer (does everything for you)
+# Run guided installer (does everything for you)
 sudo ./install.sh -i
+# Or just: sudo ./install.sh  (then choose option 1)
 ```
 
 **Quick Setup:** Just press Enter at each prompt to accept sensible defaults!
 
-The interactive installer will:
+The guided installer will:
 
-1. ✅ Check and install dependencies (jq, cron, logrotate)
+1. ✅ Detect existing configuration (if re-running)
+   - Shows current backup directory
+   - Shows current cron schedule
+   - Shows current environment variable settings
+   - Default is to keep existing settings (just press Enter)
+2. ✅ Check and install dependencies (jq, cron, logrotate)
    - Automatically detects package manager (apt/yum/dnf/pacman)
    - Prompts for confirmation before installing
-2. ✅ Install the script to `/usr/local/bin` (or custom directory)
-3. ✅ Collect all configuration settings
-   - Backup directory (default: `/var/backups/portainer`)
-   - Cron schedule (default: Daily at 3:00 AM)
-   - Environment variables (default: Yes)
-   - Log rotation (default: Yes, keeps 14 days)
+3. ✅ Install the script to `/usr/local/bin` (or custom directory)
+4. ✅ Collect all configuration settings
+   - Backup directory (default: current or `/var/backups/portainer`)
+   - Cron schedule (default: keep existing or Daily at 3:00 AM)
+   - Environment variables (default: keep existing or Yes)
+   - Log rotation (default: keep existing or Yes, keeps 14 days)
    - Test backup (default: No)
-4. ✅ Show complete review of all changes to be made
-5. ✅ Apply changes only after your confirmation
+5. ✅ Show complete review of all changes to be made
+6. ✅ Apply changes only after your confirmation
    - **No partial installations** - if you cancel, only the script is installed
-6. ✅ Optionally run a test backup to verify setup
+7. ✅ Optionally run a test backup to verify setup
 
-**Default Configuration** (when pressing Enter at all prompts):
+**Default Configuration** (when pressing Enter at all prompts on fresh install):
 
 | Setting                         | Default Value             |
 | ------------------------------- | ------------------------- |
 | 📦 Install Dependencies         | Yes (jq, cron, logrotate) |
-| � Backup Location               | `/var/backups/portainer`  |
+| 📁 Backup Location              | `/var/backups/portainer`  |
 | ⏰ Schedule                     | Daily at 3:00 AM          |
 | 🔐 Backup Environment Variables | Yes                       |
 | 📝 Log Rotation                 | Yes (14 days)             |
 | 🧪 Test Backup                  | No (skip)                 |
 
-**Example session** (accepting all defaults):
+**Re-running Guided Setup:**
+
+When you re-run the guided installer, it will:
+
+- 📋 Detect and show your current configuration
+- ✅ Default to keeping existing settings (just press Enter)
+- ✏️ Allow you to update any setting by typing a new value
+- 🔄 Update the script to the latest version
 
 ```bash
 sudo ./install.sh -i
-# Press Enter at each prompt to accept defaults
-# ⏎ ⏎ ⏎ ⏎ ⏎ ⏎ ⏎
-# Done in ~10 seconds! ✅
+# Shows: "📋 Existing configuration detected"
+# Current backup directory: /mnt/storage/docker/backups/portainer
+# Existing cron job found:
+#   Schedule: 0 3 * * *
+# Update existing cron schedule? [y/N]: ⏎  (press Enter to keep)
+# ✅ Kept existing cron job
 ```
 
-### Option 2: Quick Install (Script Only, Manual Config)
+### Option 2: Simple Install (Script Only, Manual Config)
 
 ```bash
-# Install to /usr/local/bin (default, adds to PATH)
-sudo ./install.sh
+sudo ./install.sh -s
+# Or: sudo ./install.sh  (then choose option 2)
 
 # Or install to custom directory
-sudo ./install.sh /opt/scripts
+sudo ./install.sh -s /opt/scripts
 ```
 
 This only installs the script. You'll need to manually:
@@ -120,7 +152,23 @@ This only installs the script. You'll need to manually:
 - Set up cron job
 - Configure log rotation
 
-### Option 3: Manual Install
+### Option 3: Update Mode (Update Script, Keep Config)
+
+Perfect for updating to the latest version without reconfiguring:
+
+```bash
+sudo ./install.sh -u
+# Or: sudo ./install.sh  (then choose option 3)
+```
+
+This will:
+
+- ✅ Update the script to the latest version
+- ✅ Preserve existing cron jobs
+- ✅ Preserve logrotate configuration
+- ✅ No prompts or dependency checks
+
+### Option 4: Manual Install
 
 ```bash
 # Just copy the script anywhere you want
@@ -136,17 +184,26 @@ sudo chmod 755 /usr/local/bin/backup_stacks.sh
 To remove the backup script and configuration:
 
 ```bash
-# Interactive uninstall (prompts for each item)
+cd Scripts/portainer_backups
 sudo ./uninstall.sh
 ```
 
 The uninstaller will:
 
-- ✅ Remove `/usr/local/bin/backup_stacks.sh`
-- ✅ Remove logrotate configuration (`/etc/logrotate.d/portainer-backup`)
-- ✅ Remove cron job for backup_stacks.sh
-- ℹ️ Keep installed packages (jq, logrotate, cron) - they're useful system utilities
-- ℹ️ Keep backup directories (contain your data)
+1. 🔍 Detect installed components:
+   - Script at `/usr/local/bin/backup_stacks.sh`
+   - Logrotate config at `/etc/logrotate.d/portainer-backup`
+   - Cron jobs containing `backup_stacks.sh`
+   - Log file at `/var/log/portainer_backup.log`
+2. 📋 Show everything that will be removed
+3. ⚠️ Ask for confirmation before removing anything
+4. ✅ Remove confirmed components:
+   - Script file
+   - Logrotate configuration
+   - Cron job
+   - Optionally log files
+5. ℹ️ Keep installed packages (jq, logrotate, cron) - they're useful system utilities
+6. ℹ️ Keep backup directories (contain your data)
 
 **Manual uninstall:**
 
