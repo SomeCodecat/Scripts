@@ -316,14 +316,43 @@ if [ "$INTERACTIVE" = "guided" ]; then
   EXISTING_CRON=$(crontab -l 2>/dev/null | grep "backup_stacks.sh" || true)
   CURRENT_BACKUP_DIR=""
   CURRENT_BACKUP_ENVS=""
+  CONFIG_DETECTED=false
   
   if [ -n "$EXISTING_CRON" ]; then
-    echo "📋 Existing configuration detected"
+    CONFIG_DETECTED=true
     # Extract backup directory from cron command
     CURRENT_BACKUP_DIR=$(echo "$EXISTING_CRON" | grep -oP '\-d\s+\K[^\s]+' || true)
     # Check if --backup-envs flag is present
     if echo "$EXISTING_CRON" | grep -q '\-\-backup-envs'; then
       CURRENT_BACKUP_ENVS="yes"
+    fi
+  fi
+  
+  # Check if backup directory exists (but no cron)
+  if [ -z "$EXISTING_CRON" ]; then
+    # Check common locations
+    for dir in /var/backups/portainer /mnt/storage/docker/backups/portainer/* /backup/portainer; do
+      if [ -d "$dir" ] && [ -n "$(find "$dir" -name "*.yml" -type f 2>/dev/null | head -1)" ]; then
+        CURRENT_BACKUP_DIR="$dir"
+        CONFIG_DETECTED=true
+        break
+      fi
+    done
+  fi
+  
+  # Display what was detected
+  if [ "$CONFIG_DETECTED" = true ]; then
+    echo "📋 Existing configuration detected:"
+    if [ -n "$EXISTING_CRON" ]; then
+      echo "  • Active cron job found"
+    fi
+    if [ -n "$CURRENT_BACKUP_DIR" ] && [ -d "$CURRENT_BACKUP_DIR" ]; then
+      backup_count=$(find "$CURRENT_BACKUP_DIR" -name "*.yml" -type f 2>/dev/null | wc -l || echo 0)
+      echo "  • Backup directory exists: $CURRENT_BACKUP_DIR"
+      echo "    ($backup_count backup files found)"
+    fi
+    if [ "$CURRENT_BACKUP_ENVS" = "yes" ]; then
+      echo "  • Environment variable backups enabled"
     fi
     echo ""
   fi
