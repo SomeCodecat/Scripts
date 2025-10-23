@@ -84,7 +84,7 @@ ALPINE_IMAGE="alpine:3.19"
 SIMPLE_PREFIX="stack_"
 PORTAINER_DB_PATH="/data/portainer.db"
 COMPOSE_DIR_PREFIX="/data/compose"
-COMPOSE_CANDIDATES="docker-compose.yml docker-compose.yaml"
+COMPOSE_CANDIDATES=("docker-compose.yml" "docker-compose.yaml")
 CONTAINER_PORTAINER_MOUNT="/data"
 CONTAINER_BACKUP_MOUNT="/backups"
 DOCKER_RETRIES=2
@@ -215,9 +215,7 @@ printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
   # Build the shell command that will run inside the container.
   # It copies the first candidate compose file it finds and prints its checksum and size: "<checksum|NO_CHECKSUM> <size>"
   container_sh_cmd="set -e\n"
-  echo "DEBUG: COMPOSE_CANDIDATES=[$COMPOSE_CANDIDATES]" >&2
-  for candidate in $COMPOSE_CANDIDATES; do
-    echo "DEBUG: In loop, candidate=[$candidate]" >&2
+  for candidate in "${COMPOSE_CANDIDATES[@]}"; do
     container_sh_cmd+="if [ -f \"${COMPOSE_DIR_PREFIX}/$id/${candidate}\" ]; then src='${COMPOSE_DIR_PREFIX}/$id/${candidate}'; fi\n"
   done
   container_sh_cmd+="if [ -n \"\$src\" ]; then\n"
