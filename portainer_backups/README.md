@@ -4,6 +4,42 @@
 
 This script backs up Portainer stack compose files and environment variables by reading directly from the Portainer database.
 
+## 📑 Table of Contents
+
+- [Portainer Stacks Backup](#portainer-stacks-backup)
+  - [📑 Table of Contents](#-table-of-contents)
+  - [Why This Approach?](#why-this-approach)
+  - [Installation](#installation)
+    - [Option 1: Interactive Install (Easiest - Recommended) ⚡](#option-1-interactive-install-easiest---recommended-)
+    - [Option 2: Quick Install (Script Only, Manual Config)](#option-2-quick-install-script-only-manual-config)
+    - [Option 3: Manual Install](#option-3-manual-install)
+  - [Quick Start](#quick-start)
+  - [Scheduling with Cron](#scheduling-with-cron)
+    - [Why Log Rotation Matters](#why-log-rotation-matters)
+    - [Option 1: Use logrotate (Recommended)](#option-1-use-logrotate-recommended)
+    - [Option 2: Redirect to /dev/null (no logs)](#option-2-redirect-to-devnull-no-logs)
+    - [Option 3: Use systemd journal (systemd systems)](#option-3-use-systemd-journal-systemd-systems)
+  - [Command Line Options](#command-line-options)
+  - [Backup to Network Location](#backup-to-network-location)
+    - [Direct Network Backup](#direct-network-backup)
+    - [Two-Stage Backup (Recommended for Reliability)](#two-stage-backup-recommended-for-reliability)
+  - [File Structure](#file-structure)
+  - [Requirements](#requirements)
+  - [Notes](#notes)
+  - [How It Works](#how-it-works)
+    - [Database Reading Process](#database-reading-process)
+    - [Backup Process](#backup-process)
+    - [What Gets Backed Up](#what-gets-backed-up)
+  - [Security Notes](#security-notes)
+    - [⚠️ Environment Variables Contain Sensitive Data](#️-environment-variables-contain-sensitive-data)
+    - [Security Measures](#security-measures)
+    - [Best Practices](#best-practices)
+  - [Advanced Options](#advanced-options)
+    - [Simple Mode](#simple-mode)
+    - [Custom Rotation](#custom-rotation)
+    - [Dry Run Mode](#dry-run-mode)
+    - [Custom Portainer Volume](#custom-portainer-volume)
+
 ## Why This Approach?
 
 - ✅ **No API dependency**: Works without Portainer running or API access
@@ -14,7 +50,9 @@ This script backs up Portainer stack compose files and environment variables by 
 
 ## Installation
 
-### Option 1: Interactive Install (Easiest - Recommended)
+### Option 1: Interactive Install (Easiest - Recommended) ⚡
+
+**⏱️ 10-second setup:** Just press Enter to accept smart defaults!
 
 ```bash
 # Clone or download the script
@@ -26,14 +64,50 @@ cd Scripts/portainer_backups
 sudo ./install.sh -i
 ```
 
+**Quick Setup:** Just press Enter at each prompt to accept sensible defaults!
+
 The interactive installer will:
 
-1. ✅ Install the script to `/usr/local/bin` (or custom directory)
-2. ✅ Create your backup directory (asks for path)
-3. ✅ Set up automatic cron schedule (you choose frequency)
-4. ✅ Optionally run a test backup immediately
+1. ✅ Check and install dependencies (jq, logrotate)
+   - Automatically detects package manager (apt/yum/dnf/pacman)
+   - Prompts for confirmation before installing
+2. ✅ Install the script to `/usr/local/bin` (or custom directory)
+3. ✅ Create your backup directory
+   - Default: `/var/backups/portainer`
+   - Press Enter to accept or specify custom path
+4. ✅ Set up automatic cron schedule
+   - Default: Daily at 3:00 AM (`0 3 * * *`)
+   - Options: Every 6/12 hours, weekly, or custom
+5. ✅ Backup environment variables
+   - Default: Yes (recommended)
+6. ✅ Configure log rotation
+   - Default: Yes (rotates daily, keeps 14 days)
+   - Prevents logs from filling disk
+7. ✅ Optionally run a test backup
+   - Default: No (skip test)
+   - Choose Yes to verify setup immediately
 
-### Option 2: Quick Install (Script Only)
+**Default Configuration** (when pressing Enter at all prompts):
+
+| Setting                         | Default Value            |
+| ------------------------------- | ------------------------ |
+| � Install Dependencies          | Yes (jq, logrotate)      |
+| �📁 Backup Location             | `/var/backups/portainer` |
+| ⏰ Schedule                     | Daily at 3:00 AM         |
+| 🔐 Backup Environment Variables | Yes                      |
+| 📝 Log Rotation                 | Yes (14 days)            |
+| 🧪 Test Backup                  | No (skip)                |
+
+**Example session** (accepting all defaults):
+
+```bash
+sudo ./install.sh -i
+# Press Enter at each prompt to accept defaults
+# ⏎ ⏎ ⏎ ⏎ ⏎ ⏎ ⏎
+# Done in ~10 seconds! ✅
+```
+
+### Option 2: Quick Install (Script Only, Manual Config)
 
 ```bash
 # Install to /usr/local/bin (default, adds to PATH)
@@ -43,7 +117,11 @@ sudo ./install.sh
 sudo ./install.sh /opt/scripts
 ```
 
-You'll need to manually create backup directory and set up cron.
+This only installs the script. You'll need to manually:
+
+- Create backup directory
+- Set up cron job
+- Configure log rotation
 
 ### Option 3: Manual Install
 
@@ -59,6 +137,9 @@ sudo chmod 755 /usr/local/bin/backup_stacks.sh
 ## Quick Start
 
 **Note: You must specify a backup destination with `-d`**
+
+<details>
+<summary>📋 Basic Usage Examples (click to expand)</summary>
 
 ```bash
 # Basic usage - backup to local directory
@@ -77,7 +158,12 @@ sudo chmod 755 /usr/local/bin/backup_stacks.sh
 ./backup_stacks.sh -d /backup/portainer --backup-envs --dry-run
 ```
 
+</details>
+
 ## Scheduling with Cron
+
+<details>
+<summary>⏰ Cron Job Examples (click to expand)</summary>
 
 Run backups automatically at 3 AM daily:
 
@@ -88,6 +174,51 @@ Run backups automatically at 3 AM daily:
 # Or backup to network location
 0 3 * * * /usr/local/bin/backup_stacks.sh -d /mnt/nas/portainer-backups -e >> /var/log/portainer_backup.log 2>&1
 ```
+
+</details>
+
+<details>
+<summary>📝 Log Rotation Setup (Important - Prevents Disk Fill)</summary>
+
+### Why Log Rotation Matters
+
+Without rotation, logs will grow indefinitely and fill your disk. The interactive installer sets this up automatically.
+
+### Option 1: Use logrotate (Recommended)
+
+Create `/etc/logrotate.d/portainer-backup`:
+
+```bash
+sudo tee /etc/logrotate.d/portainer-backup > /dev/null << 'EOF'
+/var/log/portainer_backup.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 644 root root
+}
+EOF
+```
+
+This rotates logs daily and keeps 14 days of compressed history.
+
+### Option 2: Redirect to /dev/null (no logs)
+
+```bash
+# If you don't need logs
+0 3 * * * /usr/local/bin/backup_stacks.sh -d /backup/portainer -e > /dev/null 2>&1
+```
+
+### Option 3: Use systemd journal (systemd systems)
+
+```bash
+# Logs go to systemd journal automatically
+0 3 * * * systemd-cat -t portainer-backup /usr/local/bin/backup_stacks.sh -d /backup/portainer -e
+```
+
+</details>
 
 ## Command Line Options
 
@@ -106,7 +237,12 @@ Run backups automatically at 3 AM daily:
 
 ## Backup to Network Location
 
+<details>
+<summary>🌐 Network Backup Setup (click to expand)</summary>
+
 The script works perfectly with network-mounted storage:
+
+### Direct Network Backup
 
 ```bash
 # Mount your NAS/network share
@@ -120,19 +256,25 @@ backup_stacks.sh -d /mnt/nas/portainer-backups --backup-envs
 0 3 * * * /usr/local/bin/backup_stacks.sh -d /mnt/nas/portainer-backups -e >> /var/log/portainer_backup.log 2>&1
 ```
 
-**Alternative: Two-stage backup** (faster, more reliable)
+### Two-Stage Backup (Recommended for Reliability)
+
+Faster and more reliable - backup locally first, then sync to network:
 
 ```bash
 # Backup to local first (fast), then sync to network (resilient)
 backup_stacks.sh -d /var/backups/portainer -e && rsync -av /var/backups/portainer/ /mnt/nas/portainer-backups/
 ```
 
-## File structure
+This approach ensures backups complete even if network is temporarily unavailable.
 
-All backup files now include timestamps for proper rotation:
+</details>
+
+## File Structure
+
+All backup files include timestamps for proper rotation:
 
 ```text
-/opt/portainer_backups/backups/
+/backup/portainer/
 ├── my-app/
 │   ├── my-app_2025-10-23_030000.yml
 │   ├── my-app_2025-10-23_030000.env
@@ -143,25 +285,38 @@ All backup files now include timestamps for proper rotation:
     └── web-frontend_2025-10-23_030000.stack.json
 ```
 
-Simple mode uses stack IDs as folder names:
+Simple mode (`--simple`) uses stack IDs as folder names:
 
 ```text
-/opt/portainer_backups/backups/
-├── stack_a1b2c3d4/
-│   ├── stack_a1b2c3d4_2025-10-23_030000.yml
-│   ├── stack_a1b2c3d4_2025-10-23_030000.env
-│   └── stack_a1b2c3d4_2025-10-23_030000.stack.json
-└── stack_e5f6g7h8/
-    ├── stack_e5f6g7h8_2025-10-23_030000.yml
-    ├── stack_e5f6g7h8_2025-10-23_030000.env
-    └── stack_e5f6g7h8_2025-10-23_030000.stack.json
+/backup/portainer/
+├── stack_1/
+│   ├── stack_1_2025-10-23_030000.yml
+│   ├── stack_1_2025-10-23_030000.env
+│   └── stack_1_2025-10-23_030000.stack.json
+└── stack_2/
+    ├── stack_2_2025-10-23_030000.yml
+    ├── stack_2_2025-10-23_030000.env
+    └── stack_2_2025-10-23_030000.stack.json
 ```
 
 ## Requirements
 
-- `jq` - JSON parsing (install with `apt install jq` or `yum install jq`)
-- `docker` - Docker CLI access
+**Automatically installed by the installer:**
+
+- `jq` - JSON parsing (installer detects and installs via apt/yum/dnf/pacman)
+- `logrotate` - Log rotation (optional, installer can install it)
+
+**Required (must be pre-installed):**
+
+- `docker` - Docker CLI access (required to read Portainer data)
 - Access to Portainer data volume (usually `portainer_data`)
+
+**Supported Package Managers:**
+
+- Debian/Ubuntu: `apt-get`
+- RHEL/CentOS: `yum`
+- Fedora: `dnf`
+- Arch Linux: `pacman`
 
 ## Notes
 
@@ -173,20 +328,29 @@ Simple mode uses stack IDs as folder names:
 
 ## How It Works
 
+<details>
+<summary>🔧 Technical Details (click to expand)</summary>
+
+### Database Reading Process
+
 The script reads directly from Portainer's BoltDB database (`/data/portainer.db`) to extract:
 
 1. **Stack information**: ID, name, project path
 2. **Environment variables**: Stored in the `Env` array for each stack
 3. **Stack metadata**: Creation date, update info, etc.
 
+### Backup Process
+
 It then:
 
 - Copies compose files from `/data/compose/<stack-id>/` using Docker containers
 - Extracts environment variables from the database JSON
 - Organizes everything in per-stack folders with timestamps
-- Automatically rotates old backups
+- Automatically rotates old backups based on timestamp grouping
+- Verifies file integrity with SHA-256 checksums
+- Retries failed operations with exponential backoff
 
-## What Gets Backed Up
+### What Gets Backed Up
 
 For each stack, the script creates:
 
@@ -198,18 +362,84 @@ For each stack, the script creates:
     └── stack-name_2025-10-23_030000.stack.json    # Full stack metadata from database
 ```
 
+</details>
+
 ## Security Notes
 
-**Environment variables often contain sensitive data!**
+<details>
+<summary>🔐 Security Considerations (click to expand)</summary>
 
-- The `.env` files contain passwords, API keys, and other secrets
-- Backup files are created with `600` permissions (owner read/write only)
-- Store backups in a secure location
-- Consider encrypting backup directories
-- Never commit `.env` files to version control
+### ⚠️ Environment Variables Contain Sensitive Data
+
+The `.env` files typically contain:
+
+- Database passwords
+- API keys and tokens
+- Secret keys
+- Private credentials
+
+### Security Measures
+
+This script implements several security measures:
+
+- ✅ `.env` files created with `600` permissions (owner read/write only)
+- ✅ Checksums verify file integrity
+- ✅ No network transmission of credentials (local file operations)
+
+### Best Practices
+
+- 🔒 Store backups in a secure location
+- 🔒 Consider encrypting backup directories (e.g., with `encfs` or LUKS)
+- 🔒 Restrict access to backup directory (chmod 700)
+- 🔒 Never commit `.env` files to version control
+- 🔒 Regularly audit who has access to backups
+- 🔒 Use network share credentials files (not passwords in cron)
+
+</details>
 
 ## Advanced Options
 
-- **Simple mode** (`--simple`): Use stack IDs instead of names for folder structure
-- **Custom rotation** (`--keep-count`): Adjust how many backup runs to keep per stack
-- **Dry run** (`--dry-run`): Test the backup process without making changes
+<details>
+<summary>⚙️ Advanced Configuration (click to expand)</summary>
+
+### Simple Mode
+
+Use stack IDs instead of names for folder structure:
+
+```bash
+backup_stacks.sh -d /backup/portainer --simple
+```
+
+Creates folders like `stack_1`, `stack_2` instead of human-readable names.
+
+### Custom Rotation
+
+Adjust how many backup runs to keep per stack:
+
+```bash
+# Keep 30 days of backups
+backup_stacks.sh -d /backup/portainer --keep-count 30
+
+# Keep only last 3 backups (minimal storage)
+backup_stacks.sh -d /backup/portainer --keep-count 3
+```
+
+### Dry Run Mode
+
+Test the backup process without making changes:
+
+```bash
+backup_stacks.sh -d /backup/portainer --backup-envs --dry-run
+```
+
+Shows exactly what would happen without creating any files.
+
+### Custom Portainer Volume
+
+If using a non-standard volume name:
+
+```bash
+backup_stacks.sh -d /backup/portainer --volume my_portainer_data
+```
+
+</details>
