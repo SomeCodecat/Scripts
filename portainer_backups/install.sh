@@ -313,7 +313,7 @@ if [ "$INTERACTIVE" = "guided" ]; then
   # === DETECT EXISTING CONFIGURATION ===
   
   # Check for existing cron job to extract current settings
-  EXISTING_CRON=$(crontab -l 2>/dev/null | grep "backup_stacks.sh" || true)
+  EXISTING_CRON=$(sudo crontab -l 2>/dev/null | grep "backup_stacks.sh" || true)
   CURRENT_BACKUP_DIR=""
   CURRENT_BACKUP_ENVS=""
   CONFIG_DETECTED=false
@@ -387,7 +387,7 @@ if [ "$INTERACTIVE" = "guided" ]; then
     echo "⚠ cron is not available, skipping schedule setup"
   else
     # Check for existing cron job
-    EXISTING_CRON=$(crontab -l 2>/dev/null | grep "backup_stacks.sh" || true)
+    EXISTING_CRON=$(sudo crontab -l 2>/dev/null | grep "backup_stacks.sh" || true)
     
     if [ -n "$EXISTING_CRON" ]; then
       # Extract the schedule part (first 5 fields)
