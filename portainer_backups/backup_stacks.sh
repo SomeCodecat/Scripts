@@ -107,11 +107,34 @@ fi
 command -v jq >/dev/null 2>&1 || { echo "ERROR: jq is not installed. Please install jq."; exit 1; }
 command -v docker >/dev/null 2>&1 || { echo "ERROR: docker is not installed or not in PATH."; exit 1; }
 
-# Ensure backup directory exists
-if ! mkdir -p "$BACKUP_DIR"; then
-  echo "ERROR: cannot create backup directory '$BACKUP_DIR'" >&2
-  echo "Make sure the path is valid and you have write permissions." >&2
-  exit 1
+# Check if we have sufficient permissions
+# Try to create backup directory or test write permissions
+if ! mkdir -p "$BACKUP_DIR" 2>/dev/null; then
+  if [ "$EUID" -ne 0 ] && [ "$(id -u)" -ne 0 ]; then
+    echo "ERROR: Insufficient permissions to create backup directory '$BACKUP_DIR'" >&2
+    echo "Please run this script with sudo:" >&2
+    echo "  sudo $0 $*" >&2
+    exit 1
+  else
+    echo "ERROR: Cannot create backup directory '$BACKUP_DIR'" >&2
+    echo "Make sure the path is valid and the parent directory exists." >&2
+    exit 1
+  fi
+fi
+
+# Test write permissions
+if ! touch "$BACKUP_DIR/.write_test" 2>/dev/null; then
+  if [ "$EUID" -ne 0 ] && [ "$(id -u)" -ne 0 ]; then
+    echo "ERROR: No write permission for backup directory '$BACKUP_DIR'" >&2
+    echo "Please run this script with sudo:" >&2
+    echo "  sudo $0 $*" >&2
+    exit 1
+  else
+    echo "ERROR: No write permission for backup directory '$BACKUP_DIR'" >&2
+    exit 1
+  fi
+else
+  rm -f "$BACKUP_DIR/.write_test"
 fi
 
 echo "===== Portainer stacks backup started: $(date --iso-8601=seconds) ====="
