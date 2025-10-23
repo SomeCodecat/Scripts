@@ -277,9 +277,17 @@ if [ "$INTERACTIVE" = true ]; then
   # Log rotation
   SETUP_LOGROTATE="N"
   if [ "$LOGROTATE_AVAILABLE" = true ] && [ -n "$CRON_SCHEDULE" ]; then
-    echo ""
-    read -p "Set up automatic log rotation? [Y/n]: " SETUP_LOGROTATE
-    SETUP_LOGROTATE="${SETUP_LOGROTATE:-Y}"
+    # Check if logrotate config already exists
+    if [ -f "/etc/logrotate.d/portainer-backup" ]; then
+      echo ""
+      echo "Note: logrotate configuration already exists at /etc/logrotate.d/portainer-backup"
+      read -p "Overwrite existing log rotation config? [y/N]: " SETUP_LOGROTATE
+      SETUP_LOGROTATE="${SETUP_LOGROTATE:-N}"
+    else
+      echo ""
+      read -p "Set up automatic log rotation? [Y/n]: " SETUP_LOGROTATE
+      SETUP_LOGROTATE="${SETUP_LOGROTATE:-Y}"
+    fi
   fi
   
   # Test backup
