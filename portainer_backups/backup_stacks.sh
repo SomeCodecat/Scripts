@@ -315,11 +315,11 @@ printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
 
   # Rotation: keep last N backup runs per stack (grouped by timestamp)
   if [ "${KEEP_COUNT:-0}" -gt 0 ]; then
+    declare -A run_groups
     if [ "${DRY_RUN,,}" = "true" ] || [ "${DRY_RUN,,}" = "1" ]; then
       echo "DRY RUN: would perform rotation in $stack_dir (keep ${KEEP_COUNT} runs)"
       # Still show what would be deleted for dry run
       if [ -d "$stack_dir" ]; then
-        declare -A run_groups
         for f in "$stack_dir"/${base_filename}*.*; do
           [ -e "$f" ] || continue
           name=$(basename -- "$f")
@@ -353,7 +353,6 @@ printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
       fi
     else
       # Actual rotation logic
-      declare -A run_groups
       for f in "$stack_dir"/${base_filename}*.*; do
         [ -e "$f" ] || continue
         name=$(basename -- "$f")
