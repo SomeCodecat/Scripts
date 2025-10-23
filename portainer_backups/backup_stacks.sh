@@ -215,7 +215,9 @@ printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
   # Build the shell command that will run inside the container.
   # It copies the first candidate compose file it finds and prints its checksum and size: "<checksum|NO_CHECKSUM> <size>"
   container_sh_cmd="set -e\n"
+  echo "DEBUG: COMPOSE_CANDIDATES=[$COMPOSE_CANDIDATES]" >&2
   for candidate in $COMPOSE_CANDIDATES; do
+    echo "DEBUG: In loop, candidate=[$candidate]" >&2
     container_sh_cmd+="if [ -f \"${COMPOSE_DIR_PREFIX}/$id/${candidate}\" ]; then src='${COMPOSE_DIR_PREFIX}/$id/${candidate}'; fi\n"
   done
   container_sh_cmd+="if [ -n \"\$src\" ]; then\n"
@@ -241,6 +243,7 @@ printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
     # Run container and capture output (stdout/stderr)
     container_out=""
     rc=0
+    echo "DEBUG: About to run docker with command: [$container_sh_cmd]" >&2
   container_out=$(docker run --rm -v "$PORTAINER_VOLUME":"$CONTAINER_PORTAINER_MOUNT":ro -v "$BACKUP_DIR":"$CONTAINER_BACKUP_MOUNT":rw "$ALPINE_IMAGE" sh -c "$container_sh_cmd" 2>&1) || rc=$?
     if [ $rc -ne 0 ]; then
       echo "WARN: docker run failed (exit $rc). Output:\n$container_out" >&2
