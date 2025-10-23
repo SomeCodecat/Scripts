@@ -150,6 +150,10 @@ LOGROTATE_AVAILABLE=false
 if command -v logrotate >/dev/null 2>&1; then
   echo "✓ logrotate is installed"
   LOGROTATE_AVAILABLE=true
+elif [ -x /usr/sbin/logrotate ]; then
+  # logrotate might be in /usr/sbin which may not be in PATH for non-root users
+  echo "✓ logrotate is installed"
+  LOGROTATE_AVAILABLE=true
 else
   echo "⚠ logrotate is not installed (optional, for log rotation)"
   read -p "Install logrotate now? [Y/n]: " INSTALL_LOGROTATE
@@ -168,7 +172,8 @@ else
       echo "⚠ Could not install logrotate. You can install it manually later."
       LOGROTATE_AVAILABLE=false
     fi
-    if command -v logrotate >/dev/null 2>&1; then
+    # Check again in both PATH and /usr/sbin
+    if command -v logrotate >/dev/null 2>&1 || [ -x /usr/sbin/logrotate ]; then
       echo "✓ logrotate installed successfully"
       LOGROTATE_AVAILABLE=true
     fi
