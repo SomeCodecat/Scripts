@@ -367,6 +367,13 @@ if [ "$INTERACTIVE" = "guided" ]; then
       echo "  Schedule: $CURRENT_CRON_SCHEDULE"
       echo "  Full: $EXISTING_CRON"
       echo ""
+      
+      # Check if it has --report-compact
+      if ! echo "$EXISTING_CRON" | grep -q "\-\-report-compact"; then
+        echo "💡 Note: Your cron job doesn't have --report-compact (for cleaner logs)"
+        echo ""
+      fi
+      
       read -p "Update existing cron schedule? [y/N]: " UPDATE_CRON
       UPDATE_CRON="${UPDATE_CRON:-N}"
       
@@ -476,7 +483,7 @@ if [ "$INTERACTIVE" = "guided" ]; then
   
   if [ -n "$CRON_SCHEDULE" ] && [ "$CRON_SCHEDULE" != "KEEP_EXISTING" ]; then
     LOG_FILE="/var/log/portainer_backup.log"
-    CRON_COMMAND="$CRON_SCHEDULE $DEST_DIR/backup_stacks.sh -d $BACKUP_DIR$ENVS_FLAG >> $LOG_FILE 2>&1"
+    CRON_COMMAND="$CRON_SCHEDULE $DEST_DIR/backup_stacks.sh -d $BACKUP_DIR$ENVS_FLAG --report-compact >> $LOG_FILE 2>&1"
     if [ -n "$EXISTING_CRON" ]; then
       echo "  $STEP_NUM. Update cron job in root's crontab:"
     else
@@ -487,7 +494,14 @@ if [ "$INTERACTIVE" = "guided" ]; then
   elif [ "$CRON_SCHEDULE" = "KEEP_EXISTING" ]; then
     # Extract log file from existing cron or use default
     LOG_FILE=$(echo "$EXISTING_CRON" | grep -oP '>> \K[^ ]+' || echo "/var/log/portainer_backup.log")
-    echo "  $STEP_NUM. Keep existing cron job:"
+    
+    # Check if existing cron already has --report-compact
+    if echo "$EXISTING_CRON" | grep -q "\-\-report-compact"; then
+      echo "  $STEP_NUM. Keep existing cron job (already has --report-compact):"
+    else
+      echo "  $STEP_NUM. Keep existing cron job (Note: missing --report-compact flag):"
+      echo "     💡 Tip: Add --report-compact for cleaner logs"
+    fi
     echo "     $EXISTING_CRON"
     STEP_NUM=$((STEP_NUM + 1))
   fi

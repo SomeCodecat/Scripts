@@ -254,17 +254,33 @@ sudo rm -rf /var/backups/portainer
 
 ## Scheduling with Cron
 
+The **guided installer** automatically sets up cron with `--report-compact` for clean, one-line log entries.
+
 <details>
 <summary>⏰ Cron Job Examples (click to expand)</summary>
 
-Run backups automatically at 3 AM daily:
+**Recommended (with compact reporting):**
 
 ```bash
-# Run daily at 3 AM, backup to local directory
-0 3 * * * /usr/local/bin/backup_stacks.sh -d /backup/portainer -e >> /var/log/portainer_backup.log 2>&1
+# Daily at 3 AM with compact one-line summary in logs
+0 3 * * * /usr/local/bin/backup_stacks.sh -d /backup/portainer -e --report-compact >> /var/log/portainer_backup.log 2>&1
 
-# Or backup to network location
-0 3 * * * /usr/local/bin/backup_stacks.sh -d /mnt/nas/portainer-backups -e >> /var/log/portainer_backup.log 2>&1
+# Or to network location
+0 3 * * * /usr/local/bin/backup_stacks.sh -d /mnt/nas/portainer-backups -e --report-compact >> /var/log/portainer_backup.log 2>&1
+```
+
+**Without reporting (minimal logs):**
+
+```bash
+# Basic cron job without reporting
+0 3 * * * /usr/local/bin/backup_stacks.sh -d /backup/portainer -e >> /var/log/portainer_backup.log 2>&1
+```
+
+Your log file will contain clean summaries like:
+
+```
+[2025-10-23 03:00:15] ✓ Backup completed: 26/26 stacks | 156KB | 2 changed
+[2025-10-24 03:00:12] ✓ Backup completed: 26/26 stacks | 158KB | 0 changed
 ```
 
 </details>
