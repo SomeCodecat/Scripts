@@ -12,39 +12,57 @@ Arguments:
   INSTALL_DIR    Where to install the script (default: /usr/local/bin)
 
 Options:
-  -i, --interactive  Interactive setup (creates backup dir, configures cron)
+  -i, --interactive  Interactive/guided setup (creates backup dir, configures cron)
+  -s, --simple       Simple install only (no configuration)
+  -u, --update       Update existing installation (keeps current config)
   -h, --help         Show this help message
 
 Examples:
-  sudo ./install.sh                              # Quick install to /usr/local/bin
+  sudo ./install.sh                              # Show menu to choose mode
   sudo ./install.sh -i                           # Full guided setup
+  sudo ./install.sh -s                           # Simple install only
+  sudo ./install.sh -u                           # Update script only
   sudo ./install.sh /opt/scripts                 # Install to custom directory
   sudo ./install.sh -i /opt/scripts              # Interactive with custom install dir
 
-Interactive mode will:
-  1. Check and install dependencies (jq, cron, logrotate)
-  2. Install the script
-  3. Collect configuration (backup dir, schedule, etc.)
-  4. Show review of all changes
-  5. Apply changes after confirmation
-  6. Optionally test the backup
+Installation modes:
+  Interactive (-i):
+    1. Check and install dependencies (jq, cron, logrotate)
+    2. Install the script
+    3. Collect configuration (backup dir, schedule, etc.)
+    4. Show review of all changes
+    5. Apply changes after confirmation
+    6. Optionally test the backup
 
-Quick mode (no -i):
-  1. Checks and installs dependencies
-  2. Installs the script only
-  3. Shows usage examples for manual configuration
+  Simple (-s):
+    1. Checks and installs dependencies
+    2. Installs the script only
+    3. Shows usage examples for manual configuration
+
+  Update (-u):
+    1. Updates the script to latest version
+    2. Preserves existing cron jobs and configuration
+    3. No dependency checks or configuration changes
 EOF
   exit 0
 fi
 
 # Parse options
-INTERACTIVE=false
+INTERACTIVE=""
 INSTALL_DIR="/usr/local/bin"
 
 while [[ $# -gt 0 ]]; do
   case $1 in
     -i|--interactive)
-      INTERACTIVE=true
+      INTERACTIVE="guided"
+      shift
+      ;;
+    -s|--simple)
+      INTERACTIVE="simple"
+      shift
+      ;;
+    -u|--update)
+      INTERACTIVE="update"
       shift
       ;;
     -h|--help)
@@ -57,7 +75,82 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# If no mode specified, show menu
+if [ -z "$INTERACTIVE" ]; then
+  echo "═══════════════════════════════════════════════════════════"
+  echo "Portainer Backup Script Installer"
+  echo "═══════════════════════════════════════════════════════════"
+  echo ""
+  echo "Choose installation mode:"
+  echo ""
+  echo "  1) Guided Setup"
+  echo "     Full interactive setup with configuration, cron, and testing"
+  echo ""
+  echo "  2) Simple Install"
+  echo "     Install script only, configure manually later"
+  echo ""
+  echo "  3) Update"
+  echo "     Update script to latest version (keeps existing config)"
+  echo ""
+  echo "  4) Cancel"
+  echo ""
+  read -p "Enter choice [1-4]: " choice
+  
+  case $choice in
+    1)
+      INTERACTIVE="guided"
+      ;;
+    2)
+      INTERACTIVE="simple"
+      ;;
+    3)
+      INTERACTIVE="update"
+      ;;
+    4|*)
+      echo "Installation cancelled."
+      exit 0
+      ;;
+  esac
+  echo ""
+fi
+
 DEST_DIR="$INSTALL_DIR"
+
+# ============================================================================
+# UPDATE MODE - Just update the script and exit
+# ============================================================================
+
+if [ "$INTERACTIVE" = "update" ]; then
+  echo "═══════════════════════════════════════════════════════════"
+  echo "Update Mode - Updating script only"
+  echo "═══════════════════════════════════════════════════════════"
+  echo ""
+  
+  if [ ! -f "$DEST_DIR/backup_stacks.sh" ]; then
+    echo "❌ No existing installation found at $DEST_DIR/backup_stacks.sh"
+    echo "   Please use guided setup or simple install instead."
+    exit 1
+  fi
+  
+  echo "Updating script at $DEST_DIR/backup_stacks.sh..."
+  
+  if [ "$DEST_DIR" = "/usr/local/bin" ]; then
+    sudo cp -a "$(dirname "$0")/backup_stacks.sh" "$DEST_DIR/backup_stacks.sh"
+    sudo chmod 755 "$DEST_DIR/backup_stacks.sh"
+    sudo chown root:root "$DEST_DIR/backup_stacks.sh"
+  else
+    sudo mkdir -p "$DEST_DIR"
+    sudo cp -a "$(dirname "$0")/backup_stacks.sh" "$DEST_DIR/backup_stacks.sh"
+    sudo chmod 755 "$DEST_DIR/backup_stacks.sh"
+    sudo chown root:root "$DEST_DIR" "$DEST_DIR/backup_stacks.sh"
+  fi
+  
+  echo "✓ Script updated successfully!"
+  echo ""
+  echo "Existing configuration (cron, logrotate) has been preserved."
+  echo ""
+  exit 0
+fi
 
 echo "Installing portainer backup script to $DEST_DIR"
 echo ""
@@ -209,9 +302,9 @@ echo ""
 # INTERACTIVE SETUP MODE
 # ============================================================================
 
-if [ "$INTERACTIVE" = true ]; then
+if [ "$INTERACTIVE" = "guided" ]; then
   echo "═══════════════════════════════════════════════════════════"
-  echo "Interactive Setup - Configuration"
+  echo "Guided Setup - Configuration"
   echo "═══════════════════════════════════════════════════════════"
   echo ""
   echo "💡 Tip: Press Enter to accept defaults shown in [brackets]"
