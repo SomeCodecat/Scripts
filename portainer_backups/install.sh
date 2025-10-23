@@ -364,7 +364,12 @@ if [ "$INTERACTIVE" = true ]; then
   
   # Add cron job
   if [ -n "$CRON_SCHEDULE" ]; then
-    (sudo crontab -l 2>/dev/null | grep -v "backup_stacks.sh"; echo "$CRON_COMMAND") | sudo crontab -
+    # Create temp file with new crontab
+    TEMP_CRON=$(mktemp)
+    crontab -l 2>/dev/null | grep -v "backup_stacks.sh" > "$TEMP_CRON" || true
+    echo "$CRON_COMMAND" >> "$TEMP_CRON"
+    crontab "$TEMP_CRON"
+    rm -f "$TEMP_CRON"
     echo "✓ Added cron job"
     echo "  View with: sudo crontab -l"
     echo "  Logs: $LOG_FILE"
