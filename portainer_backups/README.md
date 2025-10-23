@@ -190,20 +190,24 @@ sudo ./uninstall.sh
 
 The uninstaller will:
 
-1. 🔍 Detect installed components:
-   - Script at `/usr/local/bin/backup_stacks.sh`
-   - Logrotate config at `/etc/logrotate.d/portainer-backup`
-   - Cron jobs containing `backup_stacks.sh`
-   - Log file at `/var/log/portainer_backup.log`
-2. 📋 Show everything that will be removed
-3. ⚠️ Ask for confirmation before removing anything
-4. ✅ Remove confirmed components:
-   - Script file
-   - Logrotate configuration
-   - Cron job
-   - Optionally log files
-5. ℹ️ Keep installed packages (jq, logrotate, cron) - they're useful system utilities
-6. ℹ️ Keep backup directories (contain your data)
+1. 🔍 **Detect all components** (current and old):
+   - Current script at `/usr/local/bin/backup_stacks.sh`
+   - Old scripts in different locations (`/opt/`, `$HOME/`)
+   - Current logrotate config at `/etc/logrotate.d/portainer-backup`
+   - Old logrotate configs with different naming
+   - All cron jobs containing `backup_stacks.sh` (handles duplicates)
+   - Log files in various locations
+2. 📋 **Show everything found** with status indicators (✓ current, ⚠️ old)
+3. ⚠️ **Ask for confirmation** before removing anything
+4. ✅ **Remove all components** in one go:
+   - Current and old script files
+   - Current and old logrotate configurations
+   - All cron jobs (automatically cleans up duplicates)
+   - Optionally all log files
+5. ℹ️ **Keep installed packages** (jq, logrotate, cron) - they're useful system utilities
+6. ℹ️ **Keep backup directories** (contain your data)
+
+**Note:** The uninstaller automatically detects and removes old configurations from previous versions, so you don't need to run any cleanup separately.
 
 **Manual uninstall:**
 
