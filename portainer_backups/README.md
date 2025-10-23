@@ -12,18 +12,23 @@ Usage
 Run the script with command line arguments:
 
 ```bash
-# Basic usage
+# Basic usage - backup compose files only
 ./backup_stacks.sh -u https://portainer.local:9443 -k your_api_key_here
 
-# Full example with options
+# Full backup with environment variables and timestamps
 ./backup_stacks.sh \
   --url https://portainer.local:9443 \
   --api-key your_api_key_here \
-  --backup-dir /opt/portainer_backups/backups \
-  --simple \
-  --timestamps \
   --backup-envs \
+  --timestamps \
   --keep-count 14
+
+# Simple mode with custom backup directory
+./backup_stacks.sh \
+  -u https://portainer.local:9443 \
+  -k your_api_key_here \
+  --simple \
+  --backup-dir /backup/portainer
 
 # Dry run to test configuration
 ./backup_stacks.sh -u https://portainer.local:9443 -k your_api_key_here --dry-run
@@ -89,7 +94,13 @@ Checksum verification
 
 - After copying each compose file the script attempts to verify integrity by comparing a checksum calculated inside the helper container with the copied file on the host. If the container-side checksum cannot be computed (older base images), the script falls back to a host-side size/exists check. If verification fails the copy is retried up to the configured retry count.
 
-Enhancements
+Features
 
-- Add timestamping or rotation to keep historical backups.
-- Compress backups to save space.
+- **Environment variables backup**: Use `--backup-envs` to save stack environment variables alongside compose files
+- **Timestamped backups**: Use `--timestamps` to create historical copies with timestamps
+- **Rotation**: Use `--keep-count N` to automatically remove old backups (keeps last N per stack)
+- **Dry run**: Use `--dry-run` to test configuration without making changes
+- **Retry logic**: Configurable retries for network and file operations with backoff
+- **Free space checks**: Prevents backups when disk space is low
+- **Checksum verification**: Ensures file integrity after copying
+- **Simple mode**: Use `--simple` for stack ID-based filenames instead of names
