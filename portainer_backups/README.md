@@ -13,6 +13,7 @@ This script backs up Portainer stack compose files and environment variables by 
     - [Option 1: Interactive Install (Easiest - Recommended) ⚡](#option-1-interactive-install-easiest---recommended-)
     - [Option 2: Quick Install (Script Only, Manual Config)](#option-2-quick-install-script-only-manual-config)
     - [Option 3: Manual Install](#option-3-manual-install)
+  - [Uninstallation](#uninstallation)
   - [Quick Start](#quick-start)
   - [Scheduling with Cron](#scheduling-with-cron)
     - [Why Log Rotation Matters](#why-log-rotation-matters)
@@ -68,35 +69,31 @@ sudo ./install.sh -i
 
 The interactive installer will:
 
-1. ✅ Check and install dependencies (jq, logrotate)
+1. ✅ Check and install dependencies (jq, cron, logrotate)
    - Automatically detects package manager (apt/yum/dnf/pacman)
    - Prompts for confirmation before installing
 2. ✅ Install the script to `/usr/local/bin` (or custom directory)
-3. ✅ Create your backup directory
-   - Default: `/var/backups/portainer`
-   - Press Enter to accept or specify custom path
-4. ✅ Set up automatic cron schedule
-   - Default: Daily at 3:00 AM (`0 3 * * *`)
-   - Options: Every 6/12 hours, weekly, or custom
-5. ✅ Backup environment variables
-   - Default: Yes (recommended)
-6. ✅ Configure log rotation
-   - Default: Yes (rotates daily, keeps 14 days)
-   - Prevents logs from filling disk
-7. ✅ Optionally run a test backup
-   - Default: No (skip test)
-   - Choose Yes to verify setup immediately
+3. ✅ Collect all configuration settings
+   - Backup directory (default: `/var/backups/portainer`)
+   - Cron schedule (default: Daily at 3:00 AM)
+   - Environment variables (default: Yes)
+   - Log rotation (default: Yes, keeps 14 days)
+   - Test backup (default: No)
+4. ✅ Show complete review of all changes to be made
+5. ✅ Apply changes only after your confirmation
+   - **No partial installations** - if you cancel, only the script is installed
+6. ✅ Optionally run a test backup to verify setup
 
 **Default Configuration** (when pressing Enter at all prompts):
 
-| Setting                         | Default Value            |
-| ------------------------------- | ------------------------ |
-| � Install Dependencies          | Yes (jq, logrotate)      |
-| �📁 Backup Location             | `/var/backups/portainer` |
-| ⏰ Schedule                     | Daily at 3:00 AM         |
-| 🔐 Backup Environment Variables | Yes                      |
-| 📝 Log Rotation                 | Yes (14 days)            |
-| 🧪 Test Backup                  | No (skip)                |
+| Setting                         | Default Value             |
+| ------------------------------- | ------------------------- |
+| 📦 Install Dependencies         | Yes (jq, cron, logrotate) |
+| � Backup Location               | `/var/backups/portainer`  |
+| ⏰ Schedule                     | Daily at 3:00 AM          |
+| 🔐 Backup Environment Variables | Yes                       |
+| 📝 Log Rotation                 | Yes (14 days)             |
+| 🧪 Test Backup                  | No (skip)                 |
 
 **Example session** (accepting all defaults):
 
@@ -132,6 +129,39 @@ sudo chmod 755 /usr/local/bin/backup_stacks.sh
 
 # Or run directly from current directory (no installation)
 ./backup_stacks.sh -d /mnt/nas/backups --backup-envs
+```
+
+## Uninstallation
+
+To remove the backup script and configuration:
+
+```bash
+# Interactive uninstall (prompts for each item)
+sudo ./uninstall.sh
+```
+
+The uninstaller will:
+
+- ✅ Remove `/usr/local/bin/backup_stacks.sh`
+- ✅ Remove logrotate configuration (`/etc/logrotate.d/portainer-backup`)
+- ✅ Remove cron job for backup_stacks.sh
+- ℹ️ Keep installed packages (jq, logrotate, cron) - they're useful system utilities
+- ℹ️ Keep backup directories (contain your data)
+
+**Manual uninstall:**
+
+```bash
+# Remove script
+sudo rm -f /usr/local/bin/backup_stacks.sh
+
+# Remove logrotate config
+sudo rm -f /etc/logrotate.d/portainer-backup
+
+# Remove cron job
+sudo crontab -l | grep -v backup_stacks.sh | sudo crontab -
+
+# Optionally remove backup directories
+sudo rm -rf /var/backups/portainer
 ```
 
 ## Quick Start
