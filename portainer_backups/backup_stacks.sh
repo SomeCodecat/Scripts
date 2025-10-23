@@ -2,20 +2,160 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-# Config file (sourced if present). By default we look for a config next to the script.
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-CONFIG_FILE="$SCRIPT_DIR/backup_stacks.conf"
+# Show usage information
+show_usage() {
+  cat << EOF
+Usage: $0 [OPTIONS]
 
-# If a config file exists, source it. It may define PORTAINER_URL, PORTAINER_API_KEY, BACKUP_DIR, PORTAINER_VOLUME, ALPINE_IMAGE, etc.
-if [ -f "$CONFIG_FILE" ]; then
-  # shellcheck source=/dev/null
-  . "$CONFIG_FILE"
-fi
+Backup Portainer stacks (compose files and environment variables).
 
-# Defaults (can be overridden by environment variables or the config file)
-: ""  # no-op to ensure last command status for set -e
+OPTIONS:
+  -u, --url URL              Portainer URL (default: https://portainer.example:9443)
+  -k, --api-key KEY          Portainer API key (required)
+  -d, --backup-dir DIR       Backup directory (default: /opt/portainer_backups/backups)
+  -v, --volume NAME          Portainer data volume name (default: portainer_data)
+  -i, --image IMAGE          Alpine image for file operations (default: alpine:3.19)
+  -s, --simple               Use simple mode (stack ID filenames)
+  -p, --prefix PREFIX        Simple mode filename prefix (default: stack_)
+  -t, --timestamps           Append timestamps to filenames
+  -f, --timestamp-fmt FMT    Timestamp format (default: _%F_%H%M%S)
+  -e, --backup-envs          Backup environment variables via API
+  -n, --dry-run              Show what would be done without making changes
+  -c, --keep-count N         Keep last N backup runs per stack (default: 7)
+  -r, --curl-retries N       Curl retry attempts (default: 3)
+  -b, --curl-backoff N       Curl backoff seconds (default: 5)
+  -m, --min-free-bytes N     Minimum free bytes required (default: 10485760)
+  -l, --log-max-bytes N      Log rotation size limit (default: 5242880)
+  -o, --docker-retries N     Docker copy retry attempts (default: 2)
+  -w, --docker-backoff N     Docker backoff seconds (default: 5)
+  -g, --log-file FILE        Log file path (default: /var/log/portainer_backup.log)
+  -a, --api-header HEADER    API key header name (default: X-API-Key)
+  -x, --compose-prefix PATH  Compose directory prefix (default: /data/compose)
+  -y, --compose-candidates LIST  Space-separated compose filenames (default: docker-compose.yml docker-compose.yaml)
+  -z, --curl-opts OPTS       Additional curl options
+  -h, --help                 Show this help message
+
+EXAMPLES:
+  $0 -u https://portainer.local:9443 -k myapikey123 -d /backup/portainer
+  $0 --url https://portainer.local:9443 --api-key myapikey123 --simple --timestamps
+  $0 -u https://portainer.local:9443 -k myapikey123 --dry-run
+
+EOF
+}
+
+# Parse command line arguments
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      -u|--url)
+        PORTAINER_URL="$2"
+        shift 2
+        ;;
+      -k|--api-key)
+        PORTAINER_API_KEY="$2"
+        shift 2
+        ;;
+      -d|--backup-dir)
+        BACKUP_DIR="$2"
+        shift 2
+        ;;
+      -v|--volume)
+        PORTAINER_VOLUME="$2"
+        shift 2
+        ;;
+      -i|--image)
+        ALPINE_IMAGE="$2"
+        shift 2
+        ;;
+      -s|--simple)
+        SIMPLE_MODE="true"
+        shift
+        ;;
+      -p|--prefix)
+        SIMPLE_PREFIX="$2"
+        shift 2
+        ;;
+      -t|--timestamps)
+        USE_TIMESTAMPS="true"
+        shift
+        ;;
+      -f|--timestamp-fmt)
+        TIMESTAMP_FMT="$2"
+        shift 2
+        ;;
+      -e|--backup-envs)
+        BACKUP_ENVS="true"
+        shift
+        ;;
+      -n|--dry-run)
+        DRY_RUN="true"
+        shift
+        ;;
+      -c|--keep-count)
+        KEEP_COUNT="$2"
+        shift 2
+        ;;
+      -r|--curl-retries)
+        CURL_RETRIES="$2"
+        shift 2
+        ;;
+      -b|--curl-backoff)
+        CURL_BACKOFF_SEC="$2"
+        shift 2
+        ;;
+      -m|--min-free-bytes)
+        MIN_FREE_BYTES="$2"
+        shift 2
+        ;;
+      -l|--log-max-bytes)
+        LOG_MAX_BYTES="$2"
+        shift 2
+        ;;
+      -o|--docker-retries)
+        DOCKER_RETRIES="$2"
+        shift 2
+        ;;
+      -w|--docker-backoff)
+        DOCKER_BACKOFF_SEC="$2"
+        shift 2
+        ;;
+      -g|--log-file)
+        LOG_FILE="$2"
+        shift 2
+        ;;
+      -a|--api-header)
+        API_KEY_HEADER="$2"
+        shift 2
+        ;;
+      -x|--compose-prefix)
+        COMPOSE_DIR_PREFIX="$2"
+        shift 2
+        ;;
+      -y|--compose-candidates)
+        COMPOSE_CANDIDATES="$2"
+        shift 2
+        ;;
+      -z|--curl-opts)
+        CURL_OPTS="$2"
+        shift 2
+        ;;
+      -h|--help)
+        show_usage
+        exit 0
+        ;;
+      *)
+        echo "Unknown option: $1" >&2
+        show_usage >&2
+        exit 1
+        ;;
+    esac
+  done
+}
+
+# Set defaults
+# Set defaults
 PORTAINER_URL="${PORTAINER_URL:-https://portainer.example:9443}"
-PORTAINER_API_KEY="${PORTAINER_API_KEY:-your_api_key_here}"
+PORTAINER_API_KEY="${PORTAINER_API_KEY:-}"
 BACKUP_DIR="${BACKUP_DIR:-/opt/portainer_backups/backups}"
 PORTAINER_VOLUME="${PORTAINER_VOLUME:-portainer_data}"
 ALPINE_IMAGE="${ALPINE_IMAGE:-alpine:3.19}"
@@ -30,6 +170,24 @@ USE_TIMESTAMPS="${USE_TIMESTAMPS:-false}"
 TIMESTAMP_FMT="${TIMESTAMP_FMT:-_%F_%H%M%S}"
 BACKUP_ENVS="${BACKUP_ENVS:-false}"
 DRY_RUN="${DRY_RUN:-false}"
+KEEP_COUNT="${KEEP_COUNT:-7}"
+CURL_RETRIES="${CURL_RETRIES:-3}"
+CURL_BACKOFF_SEC="${CURL_BACKOFF_SEC:-5}"
+MIN_FREE_BYTES="${MIN_FREE_BYTES:-10485760}"
+LOG_MAX_BYTES="${LOG_MAX_BYTES:-5242880}"
+DOCKER_RETRIES="${DOCKER_RETRIES:-2}"
+DOCKER_BACKOFF_SEC="${DOCKER_BACKOFF_SEC:-5}"
+LOG_FILE="${LOG_FILE:-/var/log/portainer_backup.log}"
+CURL_OPTS="${CURL_OPTS:-}"
+
+# Parse command line arguments
+parse_args "$@"
+
+# Validate required arguments
+if [ -z "$PORTAINER_API_KEY" ]; then
+  echo "ERROR: API key is required. Use -k/--api-key or set PORTAINER_API_KEY environment variable." >&2
+  exit 1
+fi
 
 # Helper / environment checks
 command -v jq >/dev/null 2>&1 || { echo "ERROR: jq is not installed. Please install jq."; exit 1; }
