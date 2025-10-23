@@ -126,16 +126,21 @@ echo "INFO: Reading stacks from Portainer database..."
 
 # Extract stack JSON objects from the database using strings command
 # The database stores stack data as JSON strings that we can extract
-stacks_json=$(docker run --rm -v "$PORTAINER_VOLUME:$CONTAINER_PORTAINER_MOUNT" "$ALPINE_IMAGE" sh -c "
+# We extract the raw JSON from the container, then process with jq on the host
+raw_stacks=$(docker run --rm -v "$PORTAINER_VOLUME:$CONTAINER_PORTAINER_MOUNT" "$ALPINE_IMAGE" sh -c "
   if [ ! -f '$PORTAINER_DB_PATH' ]; then
     echo 'ERROR: Portainer database not found at $PORTAINER_DB_PATH' >&2
     exit 1
   fi
   
   # Extract all stack JSON objects from the database
-  # Stack entries start with {\"Id\":N,\"Name\":\"...\",\"Type\":2
-  strings '$PORTAINER_DB_PATH' | grep -E '^{\"Id\":[0-9]+,\"Name\":\"[^\"]+\",\"Type\":2' | jq -c '.' 2>/dev/null | jq -s '.'
+  # Stack entries contain \"Type\":2 and \"ProjectPath\":
+  # Some lines may have leading characters (garbage from binary), so we strip them
+  strings '$PORTAINER_DB_PATH' | grep '\"Type\":2' | grep '\"ProjectPath\":' | sed 's/^[^{]*//'
 " 2>/dev/null)
+
+# Process with jq on the host (where jq is installed)
+stacks_json=$(echo "$raw_stacks" | jq -c 'select(.Type == 2 and .ProjectPath != null)' 2>/dev/null | jq -s '.')
 
 if [ -z "$stacks_json" ] || [ "$stacks_json" = "[]" ]; then
   echo "ERROR: No stacks found in Portainer database"
