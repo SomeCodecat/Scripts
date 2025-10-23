@@ -23,6 +23,7 @@ This script backs up Portainer stack compose files and environment variables by 
     - [Option 2: Redirect to /dev/null (no logs)](#option-2-redirect-to-devnull-no-logs)
     - [Option 3: Use systemd journal (systemd systems)](#option-3-use-systemd-journal-systemd-systems)
   - [Command Line Options](#command-line-options)
+    - [Reporting Features](#reporting-features)
   - [Backup to Network Location](#backup-to-network-location)
     - [Direct Network Backup](#direct-network-backup)
     - [Two-Stage Backup (Recommended for Reliability)](#two-stage-backup-recommended-for-reliability)
@@ -324,7 +325,45 @@ This rotates logs daily and keeps 14 days of compressed history.
 - `-s, --simple`: Use simple mode (stack ID filenames instead of names)
 - `-c, --keep-count N`: Keep last N backup runs per stack (default: 7)
 - `-n, --dry-run`: Show what would be done without making changes
+- `-r, --report`: Show detailed summary report after backup
+- `--report-compact`: Show compact one-line summary (ideal for cron logs)
+- `--show-changes`: Detect and highlight what changed compared to previous backup
 - `-h, --help`: Show full help message
+
+**Examples:**
+
+```bash
+# Basic backup with detailed report
+backup_stacks.sh -d /backup/portainer --report
+
+# Backup with change detection
+backup_stacks.sh -d /backup/portainer --report --show-changes
+
+# Compact report for cron (single line output)
+backup_stacks.sh -d /backup/portainer --report-compact
+```
+
+### Reporting Features
+
+**Detailed Report (`--report`)** shows:
+
+- 📊 Statistics (total stacks, success/failed counts)
+- 📁 Files created (compose files, env files, total size)
+- 💾 Storage info (disk usage, oldest backup, total files)
+- 📋 Stacks with environment variables
+- ⚠️ Changed stacks (when using `--show-changes`)
+- ❌ Failed stacks with suggestions
+
+**Compact Report (`--report-compact`)** shows:
+
+- Single-line summary perfect for cron logs
+- Format: `[timestamp] ✓ Backup completed: 26/26 stacks | 156KB | 3 changed`
+
+**Change Detection (`--show-changes`)** shows:
+
+- Which stacks changed since last backup
+- Which are identical (unchanged)
+- Works with both detailed and compact reports
 
 ## Backup to Network Location
 

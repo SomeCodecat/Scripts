@@ -18,6 +18,9 @@ OPTIONS:
   -e, --backup-envs          Backup environment variables from database
   -n, --dry-run              Show what would be done without making changes
   -c, --keep-count N         Keep last N backup runs per stack (default: 7)
+  -r, --report               Show detailed summary report after backup
+  --report-compact           Show compact one-line summary (for cron logs)
+  --show-changes             Show what changed compared to previous backup
   -h, --help                 Show this help message
 
 EXAMPLES:
@@ -25,6 +28,8 @@ EXAMPLES:
   backup_stacks.sh --backup-dir /backup/portainer --simple --backup-envs
   backup_stacks.sh -v portainer_data -d /backup/portainer --dry-run
   backup_stacks.sh -d /backup/portainer --simple --keep-count 14
+  backup_stacks.sh -d /backup/portainer --report --show-changes
+  backup_stacks.sh -d /backup/portainer --report-compact  # For cron logs
 
 EOF
 }
@@ -57,6 +62,18 @@ parse_args() {
         KEEP_COUNT="$2"
         shift 2
         ;;
+      -r|--report)
+        REPORT_MODE="detailed"
+        shift
+        ;;
+      --report-compact)
+        REPORT_MODE="compact"
+        shift
+        ;;
+      --show-changes)
+        SHOW_CHANGES="true"
+        shift
+        ;;
       -h|--help)
         show_usage
         exit 0
@@ -78,6 +95,21 @@ SIMPLE_MODE="${SIMPLE_MODE:-false}"
 BACKUP_ENVS="${BACKUP_ENVS:-false}"
 DRY_RUN="${DRY_RUN:-false}"
 KEEP_COUNT="${KEEP_COUNT:-7}"
+REPORT_MODE="${REPORT_MODE:-none}"  # none, detailed, compact
+SHOW_CHANGES="${SHOW_CHANGES:-false}"
+
+# Statistics tracking for reporting
+STATS_TOTAL=0
+STATS_SUCCESS=0
+STATS_FAILED=0
+STATS_CHANGED=0
+STATS_UNCHANGED=0
+STATS_COMPOSE_FILES=0
+STATS_ENV_FILES=0
+STATS_TOTAL_SIZE=0
+FAILED_STACKS=()
+CHANGED_STACKS=()
+STACKS_WITH_ENVS=()
 
 # Internal constants (not configurable via CLI)
 ALPINE_IMAGE="alpine:3.19"
@@ -235,6 +267,9 @@ printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
   echo "Stack: $name (ID: $id)"
   echo "  → $target_path"
 
+  # Track this stack
+  STATS_TOTAL=$((STATS_TOTAL + 1))
+
   # Before copying, ensure there's enough free space on the target mount
   if [ "${MIN_FREE_BYTES:-0}" -gt 0 ]; then
     free_bytes=$(df --output=avail -B1 "$BACKUP_DIR" 2>/dev/null | tail -1 || echo 0)
@@ -319,10 +354,36 @@ printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
   done
     if [ $copy_ok -ne 0 ]; then
       echo "  ✗ Failed to copy and verify compose file after ${DOCKER_RETRIES:-2} attempts" >&2
+      STATS_FAILED=$((STATS_FAILED + 1))
+      FAILED_STACKS+=("$name (ID: $id): Failed to copy and verify compose file")
       continue
     fi
 
     echo "  ✓ Compose file saved"
+    STATS_SUCCESS=$((STATS_SUCCESS + 1))
+    STATS_COMPOSE_FILES=$((STATS_COMPOSE_FILES + 1))
+    
+    # Track file size for reporting
+    if [ -f "$target_path" ]; then
+      file_size=$(stat -c%s "$target_path" 2>/dev/null || echo 0)
+      STATS_TOTAL_SIZE=$((STATS_TOTAL_SIZE + file_size))
+    fi
+    
+    # Check if file changed compared to previous backup (for change detection)
+    if [ "${SHOW_CHANGES}" = "true" ]; then
+      # Find the most recent previous backup (excluding current one)
+      prev_backup=$(find "$stack_dir" -name "${base_filename}_*.yml" -type f ! -name "$target_filename" -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
+      if [ -n "$prev_backup" ] && [ -f "$prev_backup" ]; then
+        if ! diff -q "$target_path" "$prev_backup" >/dev/null 2>&1; then
+          STATS_CHANGED=$((STATS_CHANGED + 1))
+          CHANGED_STACKS+=("$name")
+          echo "  ⚠️  Compose file CHANGED (diff with previous backup)"
+        else
+          STATS_UNCHANGED=$((STATS_UNCHANGED + 1))
+          echo "  ○ No changes detected (identical to previous backup)"
+        fi
+      fi
+    fi
 
   # Back up env variables from database if enabled
   if [ "${BACKUP_ENVS:-false}" = "true" ] || [ "${BACKUP_ENVS:-false}" = "1" ]; then
@@ -339,6 +400,13 @@ printf '%s\n' "$stacks_json" | jq -c '.[]' | while read -r row; do
         ENV_COUNT=$(wc -l < "$env_path" 2>/dev/null || echo 0)
         if [ "$ENV_COUNT" -gt 0 ]; then
           echo "  ✓ Environment variables saved ($ENV_COUNT vars)"
+          STATS_ENV_FILES=$((STATS_ENV_FILES + 1))
+          STACKS_WITH_ENVS+=("$name ($ENV_COUNT vars)")
+          # Track env file size
+          if [ -f "$env_path" ]; then
+            file_size=$(stat -c%s "$env_path" 2>/dev/null || echo 0)
+            STATS_TOTAL_SIZE=$((STATS_TOTAL_SIZE + file_size))
+          fi
         else
           echo "  ○ No environment variables found"
           rm -f "$env_path" || true
@@ -428,4 +496,139 @@ echo ""
 echo "═════════════════════════════════════════════════════════════"
 echo "✓ Portainer stacks backup finished: $(date --iso-8601=seconds)"
 echo "═════════════════════════════════════════════════════════════"
+
+# Generate reports based on mode
+if [ "$REPORT_MODE" = "compact" ]; then
+  # Compact one-line report for cron logs
+  STATUS_SYMBOL="✓"
+  if [ $STATS_FAILED -gt 0 ]; then
+    STATUS_SYMBOL="⚠️"
+  fi
+  
+  # Calculate duration (rough estimate based on timestamp)
+  DURATION="unknown"
+  
+  # Format size
+  if [ $STATS_TOTAL_SIZE -ge 1048576 ]; then
+    SIZE_MB=$((STATS_TOTAL_SIZE / 1048576))
+    SIZE_STR="${SIZE_MB}MB"
+  elif [ $STATS_TOTAL_SIZE -ge 1024 ]; then
+    SIZE_KB=$((STATS_TOTAL_SIZE / 1024))
+    SIZE_STR="${SIZE_KB}KB"
+  else
+    SIZE_STR="${STATS_TOTAL_SIZE}B"
+  fi
+  
+  # Build compact report
+  CHANGED_STR=""
+  if [ "${SHOW_CHANGES}" = "true" ]; then
+    CHANGED_STR=" | $STATS_CHANGED changed"
+  fi
+  
+  echo ""
+  echo "[$(date +'%Y-%m-%d %H:%M:%S')] $STATUS_SYMBOL Backup completed: $STATS_SUCCESS/$STATS_TOTAL stacks | $SIZE_STR$CHANGED_STR"
+  if [ $STATS_FAILED -gt 0 ]; then
+    echo "[$(date +'%Y-%m-%d %H:%M:%S')] ⚠️  $STATS_FAILED stack(s) failed"
+  fi
+
+elif [ "$REPORT_MODE" = "detailed" ]; then
+  # Detailed summary report
+  echo ""
+  echo "╔══════════════════════════════════════════════════════════╗"
+  echo "║                    BACKUP SUMMARY                        ║"
+  echo "╚══════════════════════════════════════════════════════════╝"
+  echo ""
+  echo "📊 Statistics:"
+  echo "  • Total stacks found:        $STATS_TOTAL"
+  echo "  • Successfully backed up:    $STATS_SUCCESS"
+  if [ $STATS_FAILED -gt 0 ]; then
+    echo "  • Failed:                     $STATS_FAILED  ⚠️"
+  else
+    echo "  • Failed:                     $STATS_FAILED"
+  fi
+  
+  if [ "${SHOW_CHANGES}" = "true" ]; then
+    echo "  • Changed:                    $STATS_CHANGED"
+    echo "  • Unchanged:                  $STATS_UNCHANGED"
+  fi
+  
+  echo ""
+  echo "📁 Files Created:"
+  echo "  • Compose files:             $STATS_COMPOSE_FILES"
+  echo "  • Environment files:          $STATS_ENV_FILES"
+  
+  # Format total size
+  if [ $STATS_TOTAL_SIZE -ge 1048576 ]; then
+    SIZE_MB=$((STATS_TOTAL_SIZE / 1048576))
+    SIZE_KB=$(( (STATS_TOTAL_SIZE % 1048576) / 1024 ))
+    echo "  • Total size:              ${SIZE_MB}.${SIZE_KB} MB"
+  elif [ $STATS_TOTAL_SIZE -ge 1024 ]; then
+    SIZE_KB=$((STATS_TOTAL_SIZE / 1024))
+    echo "  • Total size:              $SIZE_KB KB"
+  else
+    echo "  • Total size:              $STATS_TOTAL_SIZE B"
+  fi
+  
+  echo ""
+  echo "💾 Storage:"
+  echo "  • Backup directory:      $BACKUP_DIR"
+  
+  # Count total backup files
+  TOTAL_FILES=$(find "$BACKUP_DIR" -type f 2>/dev/null | wc -l || echo 0)
+  echo "  • Total backup files:     $TOTAL_FILES"
+  
+  # Calculate total disk usage
+  DISK_USAGE=$(du -sb "$BACKUP_DIR" 2>/dev/null | awk '{print $1}' || echo 0)
+  if [ $DISK_USAGE -ge 1073741824 ]; then
+    DISK_GB=$((DISK_USAGE / 1073741824))
+    DISK_MB=$(( (DISK_USAGE % 1073741824) / 1048576 ))
+    echo "  • Disk usage:            ${DISK_GB}.${DISK_MB} GB"
+  elif [ $DISK_USAGE -ge 1048576 ]; then
+    DISK_MB=$((DISK_USAGE / 1048576))
+    echo "  • Disk usage:            $DISK_MB MB"
+  else
+    DISK_KB=$((DISK_USAGE / 1024))
+    echo "  • Disk usage:            $DISK_KB KB"
+  fi
+  
+  # Find oldest backup
+  OLDEST_BACKUP=$(find "$BACKUP_DIR" -name "*.yml" -type f -printf '%T+ %p\n' 2>/dev/null | sort | head -1 | cut -d' ' -f1 | cut -d'+' -f1 || echo "unknown")
+  if [ "$OLDEST_BACKUP" != "unknown" ]; then
+    echo "  • Oldest backup:         $OLDEST_BACKUP"
+  fi
+  
+  # Show stacks with environment variables
+  if [ ${#STACKS_WITH_ENVS[@]} -gt 0 ]; then
+    echo ""
+    echo "📋 Stacks with Environment Variables:"
+    for stack_env in "${STACKS_WITH_ENVS[@]}"; do
+      echo "  • $stack_env"
+    done
+  fi
+  
+  # Show changed stacks if change detection enabled
+  if [ "${SHOW_CHANGES}" = "true" ] && [ ${#CHANGED_STACKS[@]} -gt 0 ]; then
+    echo ""
+    echo "⚠️  Changed Stacks:"
+    for changed in "${CHANGED_STACKS[@]}"; do
+      echo "  • $changed"
+    done
+  fi
+  
+  # Show failed stacks if any
+  if [ ${#FAILED_STACKS[@]} -gt 0 ]; then
+    echo ""
+    echo "❌ Failed Stacks:"
+    for failed in "${FAILED_STACKS[@]}"; do
+      echo "  • $failed"
+    done
+    echo ""
+    echo "💡 Suggestions:"
+    echo "  • Check Docker daemon is running: sudo systemctl status docker"
+    echo "  • Verify Portainer volume exists: docker volume ls | grep portainer"
+    echo "  • Check backup directory permissions: ls -ld $BACKUP_DIR"
+    echo "  • Run with --dry-run to test without making changes"
+  fi
+fi
+
 echo ""
