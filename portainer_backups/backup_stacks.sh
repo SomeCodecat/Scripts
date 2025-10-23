@@ -136,11 +136,13 @@ raw_stacks=$(docker run --rm -v "$PORTAINER_VOLUME:$CONTAINER_PORTAINER_MOUNT" "
   # Extract all stack JSON objects from the database
   # Stack entries contain \"Type\":2 and \"ProjectPath\":
   # Some lines may have leading characters (garbage from binary), so we strip them
-  strings '$PORTAINER_DB_PATH' | grep '\"Type\":2' | grep '\"ProjectPath\":' | sed 's/^[^{]*//'
+  # Also strip trailing garbage after the closing brace
+  strings '$PORTAINER_DB_PATH' | grep '\"Type\":2' | grep '\"ProjectPath\":' | sed 's/^[^{]*//' | sed 's/}[^}]*$/}/'
 " 2>/dev/null)
 
 # Process with jq on the host (where jq is installed)
-stacks_json=$(echo "$raw_stacks" | jq -c 'select(.Type == 2 and .ProjectPath != null)' 2>/dev/null | jq -s '.')
+# Use sort and unique to handle duplicates
+stacks_json=$(echo "$raw_stacks" | jq -c 'select(.Type == 2 and .ProjectPath != null)' 2>/dev/null | sort -u | jq -s '.')
 
 if [ -z "$stacks_json" ] || [ "$stacks_json" = "[]" ]; then
   echo "ERROR: No stacks found in Portainer database"
